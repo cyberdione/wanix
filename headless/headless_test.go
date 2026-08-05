@@ -6,6 +6,8 @@ import (
 	"context"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,6 +27,53 @@ func statOK(t *testing.T, ns fs.FS, p string) {
 	t.Helper()
 	if _, err := fs.Stat(ns, p); err != nil {
 		t.Errorf("namespace: Stat %q: %v", p, err)
+	}
+}
+
+// TestRunRegistersNativeGoJSDriver verifies that a caller-supplied root gets
+// the native GoJS driver too. This protects the production composition where
+// the launcher prepares its namespace before starting the listeners.
+func TestRunRegistersNativeGoJSDriver(t *testing.T) {
+	root, err := headless.Bootstrap()
+	if err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "api.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	srv := headless.New(headless.Options{
+		Root:       root,
+		APIAddr:    "unix://" + sock,
+		GoJSRunner: "/unused/test-runner.mjs",
+	})
+	done := make(chan error, 1)
+	go func() { done <- srv.Run(ctx) }()
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(sock); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := os.Stat(sock); err != nil {
+		t.Fatalf("API socket was not created: %v", err)
+	}
+	resource, err := fs.OpenContext(context.Background(), root.NS(), "#task/new/gojs")
+	if err != nil {
+		t.Fatalf("gojs task kind was not registered: %v", err)
+	}
+	defer resource.Close()
+	if _, err := io.ReadAll(resource); err != nil {
+		t.Fatalf("allocate gojs task: %v", err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not stop")
 	}
 }
 

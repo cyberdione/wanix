@@ -107,16 +107,16 @@ func (s *Server) logger() *log.Logger {
 // root boots the namespace on first use and caches the result.
 func (s *Server) root() (*wanix.Task, error) {
 	s.once.Do(func() {
-		if s.Root != nil {
-			return
-		}
-		s.Root, s.bootErr = Bootstrap()
-		if s.bootErr == nil {
-			if s.GoJSRunner != "" && !isStdio(s.APIAddr) {
-				s.Root.Register("gojs", &native.GoJSDriver{Node: s.NodeBinary, Runner: s.GoJSRunner, APIAddr: s.APIAddr})
+		if s.Root == nil {
+			s.Root, s.bootErr = Bootstrap()
+			if s.bootErr != nil {
+				return
 			}
-			s.logger().Printf("namespace ready; api=%q 9p=%q", s.APIAddr, s.NinePAddr)
 		}
+		if s.GoJSRunner != "" && !isStdio(s.APIAddr) {
+			s.Root.Register("gojs", &native.GoJSDriver{Node: s.NodeBinary, Runner: s.GoJSRunner, APIAddr: s.APIAddr})
+		}
+		s.logger().Printf("namespace ready; api=%q 9p=%q", s.APIAddr, s.NinePAddr)
 	})
 	return s.Root, s.bootErr
 }
