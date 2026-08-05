@@ -113,13 +113,17 @@ func (s *Server) root() (*wanix.Task, error) {
 				return
 			}
 		}
-		if s.GoJSRunner != "" && !isStdio(s.APIAddr) {
+		if s.GoJSRunner != "" {
 			s.Root.Register("gojs", &native.GoJSDriver{Node: s.NodeBinary, Runner: s.GoJSRunner, APIAddr: s.APIAddr})
 		}
 		s.logger().Printf("namespace ready; api=%q 9p=%q", s.APIAddr, s.NinePAddr)
 	})
 	return s.Root, s.bootErr
 }
+
+// RootTask initializes and returns the Wanix root used by this server. It is
+// intended for native launchers that must create a task before entering Run.
+func (s *Server) RootTask() (*wanix.Task, error) { return s.root() }
 
 // Run serves the configured transports until ctx is cancelled or both
 // transports stop. At least one of APIAddr or NinePAddr must be set, and at

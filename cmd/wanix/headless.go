@@ -9,8 +9,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"tractor.dev/toolkit-go/engine/cli"
+	"tractor.dev/wanix/fs"
+	"tractor.dev/wanix/fs/memfs"
 	"tractor.dev/wanix/headless"
 )
 
@@ -18,10 +21,12 @@ import (
 // non-browser host. See headless/CONTRACT.md for the wiring a host uses.
 func headlessCmd() *cli.Command {
 	var (
-		apiAddr    string
-		ninePAddr  string
-		gojsRunner string
-		nodeBinary string
+		apiAddr      string
+		ninePAddr    string
+		gojsRunner   string
+		nodeBinary   string
+		shellCommand string
+		shellWASM    string
 	)
 	cmd := &cli.Command{
 		Usage: "headless",
@@ -45,6 +50,45 @@ Logs always go to stderr, leaving stdin/stdout free for a stdio transport.`,
 			})
 			runCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			if shellCommand != "" {
+				root, err := srv.RootTask()
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "wanix headless: %v\n", err)
+					os.Exit(1)
+				}
+				if shellWASM != "" {
+					artifact, err := os.ReadFile(shellWASM)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "wanix headless: read shell wasm: %v\n", err)
+						os.Exit(1)
+					}
+					if err := root.NS().Bind(memfs.New(), ".", "bin"); err != nil {
+						fmt.Fprintf(os.Stderr, "wanix headless: mount shell wasm: %v\n", err)
+						os.Exit(1)
+					}
+					if err := fs.WriteFile(root.NS(), "bin/rc.wasm", artifact, 0755); err != nil {
+						fmt.Fprintf(os.Stderr, "wanix headless: install shell wasm: %v\n", err)
+						os.Exit(1)
+					}
+				}
+				task, err := headless.StartCommand(root, shellCommand)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "wanix headless: start shell: %v\n", err)
+					os.Exit(1)
+				}
+				go func() {
+					code, err := headless.WaitExit(task, 20*time.Millisecond)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "wanix headless: shell: %v\n", err)
+						stop()
+						return
+					}
+					if code != 0 {
+						fmt.Fprintf(os.Stderr, "wanix headless: shell exited %d\n", code)
+					}
+					stop()
+				}()
+			}
 			if err := srv.Run(runCtx); err != nil {
 				fmt.Fprintf(os.Stderr, "wanix headless: %v\n", err)
 				os.Exit(1)
@@ -55,6 +99,8 @@ Logs always go to stderr, leaving stdin/stdout free for a stdio transport.`,
 	cmd.Flags().StringVar(&ninePAddr, "9p", default9PAddr(), "raw 9P stream address (stdio|unix://path|tcp://host:port)")
 	cmd.Flags().StringVar(&gojsRunner, "gojs-runner", "", "path to wanix-gojs-runner.mjs (enables native GoJS tasks; requires socket --api)")
 	cmd.Flags().StringVar(&nodeBinary, "node", "node", "Node executable for --gojs-runner")
+	cmd.Flags().StringVar(&shellCommand, "shell-command", "", "start a native Wanix task (for example: rc.wasm -c 'echo native')")
+	cmd.Flags().StringVar(&shellWASM, "shell-wasm", "", "host path to rc.wasm, installed as bin/rc.wasm before --shell-command starts")
 	return cmd
 }
 

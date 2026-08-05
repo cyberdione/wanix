@@ -35,7 +35,7 @@ type GoJSDriver struct {
 var _ wanix.TaskDriver = (*GoJSDriver)(nil)
 
 func (d *GoJSDriver) Check(t *wanix.Task) bool {
-	if d.Runner == "" || d.APIAddr == "" || d.APIAddr == "stdio" {
+	if d.Runner == "" {
 		return false
 	}
 	typ, err := wasmutil.DetectType(t.NS(), t.Arg(0))
