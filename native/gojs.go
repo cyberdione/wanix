@@ -9,10 +9,16 @@ package native
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 
+	"tractor.dev/toolkit-go/duplex/mux"
 	"tractor.dev/wanix"
+	"tractor.dev/wanix/api"
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/misc/wasmutil"
 )
@@ -41,10 +47,27 @@ func (d *GoJSDriver) Start(t *wanix.Task) error {
 	if node == "" {
 		node = "node"
 	}
-	cmd := exec.CommandContext(t.Context(), node, d.Runner, "--api", d.APIAddr, "--tid", t.ID())
+	listener, socket, err := taskAPIListener(t)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if listener != nil {
+			_ = listener.Close()
+			_ = os.Remove(socket)
+		}
+	}()
+	go serveTaskAPI(listener, t)
+	cmd := exec.CommandContext(t.Context(), node, d.Runner, "--api", "unix://"+socket, "--tid", t.ID())
+	if stderr, _, err := t.FD(2); err == nil {
+		if writer, ok := stderr.(io.Writer); ok {
+			cmd.Stderr = writer
+		}
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start native GoJS runner: %w", err)
 	}
+	listener = nil // serveTaskAPI owns it after the child started.
 	wanix.SetWorker(t, cmd.Process)
 	go func() {
 		err := cmd.Wait()
@@ -63,4 +86,31 @@ func (d *GoJSDriver) Start(t *wanix.Task) error {
 		}
 	}()
 	return nil
+}
+
+func taskAPIListener(t *wanix.Task) (net.Listener, string, error) {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	socket := filepath.Join(dir, fmt.Sprintf("wanix-gojs-%d-%s.sock", os.Getpid(), t.ID()))
+	if err := os.Remove(socket); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, "", fmt.Errorf("remove stale GoJS API socket: %w", err)
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		return nil, "", fmt.Errorf("listen GoJS task API socket: %w", err)
+	}
+	return listener, socket, nil
+}
+
+func serveTaskAPI(listener net.Listener, task *wanix.Task) {
+	defer listener.Close()
+	defer os.Remove(listener.Addr().String())
+	conn, err := listener.Accept()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	api.Responder(mux.New(conn), task)
 }

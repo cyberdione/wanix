@@ -22,9 +22,10 @@ func (s *syscaller) write(r rpc.Responder, c *rpc.Call) {
 		return
 	}
 
-	data, ok := args[1].([]byte)
-	if !ok {
-		panic("arg 1 is not a []byte")
+	data, err := bytesArg(args[1])
+	if err != nil {
+		r.Return(err)
+		return
 	}
 
 	n, err := fs.Write(f, data)
@@ -51,9 +52,10 @@ func (s *syscaller) writeAt(r rpc.Responder, c *rpc.Call) {
 		return
 	}
 
-	data, ok := args[1].([]byte)
-	if !ok {
-		panic("arg 1 is not a []byte")
+	data, err := bytesArg(args[1])
+	if err != nil {
+		r.Return(err)
+		return
 	}
 
 	offset, ok := args[2].(uint64)
