@@ -36,8 +36,8 @@ import (
 	"tractor.dev/wanix/api"
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/fs/memfs"
-	"tractor.dev/wanix/fs/pipe"
 	"tractor.dev/wanix/fs/p9kit"
+	"tractor.dev/wanix/fs/pipe"
 	"tractor.dev/wanix/fs/signal"
 	"tractor.dev/wanix/misc/allocfs"
 	"tractor.dev/wanix/native"
@@ -60,14 +60,25 @@ type Options struct {
 
 	// Logger receives lifecycle messages. If nil, log.Printf is used.
 	Logger *log.Logger
+
+	// GoJSRunner is the packaged `wanix-gojs-runner.mjs` path. When set with a
+	// socket API address, GoJS Wasm tasks (including rc.wasm) run through Node
+	// and the existing API responder rather than a second native VFS.
+	GoJSRunner string
+
+	// NodeBinary selects the Node executable used by GoJSRunner. Empty means
+	// `node` from PATH.
+	NodeBinary string
 }
 
 // Server serves a Wanix root task over the two native transports.
 type Server struct {
-	APIAddr   string
-	NinePAddr string
-	Root      *wanix.Task
-	Logger    *log.Logger
+	APIAddr    string
+	NinePAddr  string
+	Root       *wanix.Task
+	Logger     *log.Logger
+	GoJSRunner string
+	NodeBinary string
 
 	once      sync.Once
 	bootErr   error
@@ -77,10 +88,12 @@ type Server struct {
 // New returns a Server from Options.
 func New(opts Options) *Server {
 	return &Server{
-		APIAddr:   opts.APIAddr,
-		NinePAddr: opts.NinePAddr,
-		Root:      opts.Root,
-		Logger:    opts.Logger,
+		APIAddr:    opts.APIAddr,
+		NinePAddr:  opts.NinePAddr,
+		Root:       opts.Root,
+		Logger:     opts.Logger,
+		GoJSRunner: opts.GoJSRunner,
+		NodeBinary: opts.NodeBinary,
 	}
 }
 
@@ -94,16 +107,23 @@ func (s *Server) logger() *log.Logger {
 // root boots the namespace on first use and caches the result.
 func (s *Server) root() (*wanix.Task, error) {
 	s.once.Do(func() {
-		if s.Root != nil {
-			return
+		if s.Root == nil {
+			s.Root, s.bootErr = Bootstrap()
+			if s.bootErr != nil {
+				return
+			}
 		}
-		s.Root, s.bootErr = Bootstrap()
-		if s.bootErr == nil {
-			s.logger().Printf("namespace ready; api=%q 9p=%q", s.APIAddr, s.NinePAddr)
+		if s.GoJSRunner != "" {
+			s.Root.Register("gojs", &native.GoJSDriver{Node: s.NodeBinary, Runner: s.GoJSRunner, APIAddr: s.APIAddr})
 		}
+		s.logger().Printf("namespace ready; api=%q 9p=%q", s.APIAddr, s.NinePAddr)
 	})
 	return s.Root, s.bootErr
 }
+
+// RootTask initializes and returns the Wanix root used by this server. It is
+// intended for native launchers that must create a task before entering Run.
+func (s *Server) RootTask() (*wanix.Task, error) { return s.root() }
 
 // Run serves the configured transports until ctx is cancelled or both
 // transports stop. At least one of APIAddr or NinePAddr must be set, and at

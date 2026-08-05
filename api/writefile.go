@@ -16,12 +16,13 @@ func (s *syscaller) writeFile(r rpc.Responder, c *rpc.Call) {
 		panic("arg 0 is not a string")
 	}
 
-	data, ok := args[1].([]byte)
-	if !ok {
-		panic("arg 0 is not a []byte")
+	data, err := bytesArg(args[1])
+	if err != nil {
+		r.Return(err)
+		return
 	}
 
-	err := fs.WriteFile(s.task.NS(), name, data, 0x644)
+	err = fs.WriteFile(s.task.NS(), name, data, 0x644)
 	if err != nil {
 		r.Return(err)
 		return
