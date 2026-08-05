@@ -38,6 +38,12 @@ func StartCommand(root *wanix.Task, command string) (*wanix.Task, error) {
 		"1": fskit.FileFS(os.Stdout, "1"),
 		"2": fskit.FileFS(os.Stderr, "2"),
 	}
+	// The task-scoped API resolves #task/<id>/fd through the root task table;
+	// retain the same binding in both views so GoJS syscall traffic and the
+	// driver-side FD lookup observe one terminal capability.
+	if err := root.NS().Bind(fds, ".", "#task/"+taskID+"/fd"); err != nil {
+		return nil, fmt.Errorf("bind root task stdio: %w", err)
+	}
 	if err := task.NS().Bind(fds, ".", "#task/"+taskID+"/fd"); err != nil {
 		return nil, fmt.Errorf("bind task stdio: %w", err)
 	}
