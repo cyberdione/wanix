@@ -47,10 +47,10 @@ func StartCommand(root *wanix.Task, command string) (*wanix.Task, error) {
 	if err := task.NS().Bind(fds, ".", "#task/"+taskID+"/fd"); err != nil {
 		return nil, fmt.Errorf("bind task stdio: %w", err)
 	}
-	if err := fs.WriteFile(task.NS(), "#task/"+taskID+"/cmd", []byte(command), 0644); err != nil {
+	if err := fs.WriteFile(root.NS(), "#task/"+taskID+"/cmd", []byte(command), 0644); err != nil {
 		return nil, err
 	}
-	if err := fs.WriteFile(task.NS(), "#task/"+taskID+"/ctl", []byte("start"), 0644); err != nil {
+	if err := fs.WriteFile(root.NS(), "#task/"+taskID+"/ctl", []byte("start"), 0644); err != nil {
 		return nil, err
 	}
 	return task, nil
