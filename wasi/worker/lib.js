@@ -4272,7 +4272,7 @@ var FileHandle = class extends WanixHandle {
   }
   read(buffer, options) {
     let at = 0;
-    if (options?.at) {
+    if (options?.at !== void 0) {
       at = options.at;
     }
     const count = buffer.byteLength;
@@ -4293,7 +4293,7 @@ var FileHandle = class extends WanixHandle {
   }
   write(buffer, options) {
     let at = 0;
-    if (options?.at) {
+    if (options?.at !== void 0) {
       at = options.at;
     }
     const data = new Uint8Array(buffer);

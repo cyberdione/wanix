@@ -37,7 +37,7 @@ export class FileHandle extends WanixHandle {
 
     read(buffer: ArrayBuffer|Uint8Array, options?: { at: number }): number {
         let at = 0;
-        if (options?.at) {
+        if (options?.at !== undefined) {
             at = options.at;
         }
         const count = buffer.byteLength;
@@ -59,7 +59,7 @@ export class FileHandle extends WanixHandle {
 
     write(buffer: ArrayBuffer, options?: { at: number }): number {
         let at = 0;
-        if (options?.at) {
+        if (options?.at !== undefined) {
             at = options.at;
         }
         const data = new Uint8Array(buffer);
