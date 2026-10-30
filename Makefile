@@ -80,7 +80,7 @@ wasm: $(if $(WASM_DEBUG),wasm-go,) wasm-tinygo
 .PHONY: wasm
 
 ## Build WASM module using TinyGo
-wasm-tinygo: wasi/worker/lib.js
+wasm-tinygo: js wasi/worker/lib.js
 	@if ! command -v tinygo >/dev/null 2>&1; then \
 		echo "skipping wasm-tinygo build: tinygo not installed"; \
 		exit 0; \
