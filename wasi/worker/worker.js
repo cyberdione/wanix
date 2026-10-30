@@ -107,8 +107,12 @@ function messageHandler(fs, call, tid) {
             break;
 
         case "fd_write":
-            // const at = e.data.at;
-            const wn = await fs.write(e.data.fd, e.data.data/*, at*/);
+            // WASI supplies the file position for every write.  Use it rather
+            // than relying on the kernel-side descriptor offset, which can
+            // differ for files opened through the task namespace.
+            const wn = e.data.at === undefined
+                ? await fs.write(e.data.fd, e.data.data)
+                : await fs.writeAt(e.data.fd, e.data.data, e.data.at);
             call.respond(wn);
             break;
 
