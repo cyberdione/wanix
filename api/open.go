@@ -1,6 +1,8 @@
 package api
 
 import (
+	"log"
+
 	"tractor.dev/toolkit-go/duplex/rpc"
 	"tractor.dev/wanix/fs"
 )
@@ -11,11 +13,13 @@ func (s *syscaller) open(r rpc.Responder, c *rpc.Call) {
 
 	f, err := s.task.NS().Open(args[0])
 	if err != nil {
+		log.Printf("KDBG2 Open: task=%s path=%q -> err=%v", s.task.ID(), args[0], err) // KDBG2 (temporary live-pass instrumentation)
 		r.Return(err)
 		return
 	}
 
 	fd := s.task.OpenFD(f, args[0])
+	log.Printf("KDBG2 Open: task=%s path=%q -> fd=%d", s.task.ID(), args[0], fd) // KDBG2 (temporary)
 	r.Return(uint64(fd))
 }
 
@@ -54,10 +58,12 @@ func (s *syscaller) openFile(r rpc.Responder, c *rpc.Call) {
 
 	f, err := fs.OpenFile(s.task.NS(), path, int(flags), fs.FileMode(mode))
 	if err != nil {
+		log.Printf("KDBG2 OpenFile: task=%s path=%q -> err=%v", s.task.ID(), path, err) // KDBG2 (temporary)
 		r.Return(err)
 		return
 	}
 
 	fd := s.task.OpenFD(f, path)
+	log.Printf("KDBG2 OpenFile: task=%s path=%q -> fd=%d", s.task.ID(), path, fd) // KDBG2 (temporary)
 	r.Return(uint64(fd))
 }

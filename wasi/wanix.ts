@@ -90,9 +90,8 @@ export class DirectoryHandle extends WanixHandle {
     }
 
     readDir(): Map<string, Inode> {
-        if (performance.now() - this.lastReadDir < 1000) {
-            return this.dirCache;
-        }
+        // Always refresh: mutations can happen through another WASI handle.
+        this.lastReadDir = performance.now();
         this.lastReadDir = performance.now();
         const m = new Map<string, Inode>();
         const entries = this.caller.call("path_readdir", { path: this.path }) || [];
@@ -110,7 +109,9 @@ export class DirectoryHandle extends WanixHandle {
     }
 
     removeEntry(name: string): boolean {
-        return this.caller.call("path_remove", { path: this.subpath(name) });
+        const result = this.caller.call("path_remove", { path: this.subpath(name) });
+        this.lastReadDir = -Infinity;
+        return result;
     }
 
     createLink(name: string, entry: Inode): boolean {
@@ -118,10 +119,15 @@ export class DirectoryHandle extends WanixHandle {
     }
 
     createFile(name: string, entry: Inode): boolean {
-        return this.caller.call("path_touch", { path: this.subpath(name) });
+        const result = this.caller.call("path_touch", { path: this.subpath(name) });
+        this.lastReadDir = -Infinity;
+        return result;
     }
 
     createDirectory(name: string, entry: Inode): boolean {
-        return this.caller.call("path_mkdir", { path: this.subpath(name) });
+        const result = this.caller.call("path_mkdir", { path: this.subpath(name) });
+        this.lastReadDir = -Infinity;
+        return result;
     }
+
 }

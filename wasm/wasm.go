@@ -24,6 +24,7 @@ import (
 	"tractor.dev/wanix/fs/cowfs"
 	"tractor.dev/wanix/fs/httpfs"
 	"tractor.dev/wanix/fs/memfs"
+	"tractor.dev/wanix/fs/net/tcp"
 	"tractor.dev/wanix/fs/p9kit"
 	"tractor.dev/wanix/fs/pipe"
 	"tractor.dev/wanix/fs/signal"
@@ -48,6 +49,7 @@ func main() {
 		log.Fatal(err)
 	}
 
+	tcpServices := make(map[string]fs.FS)
 	sysbindings := []struct {
 		dst  string
 		fsys fs.FS
@@ -171,6 +173,56 @@ func main() {
 		}(sess, args)
 
 		return ch.Get("port2")
+	}))
+
+	el.Set("_grantNetwork", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return false
+		}
+		taskID := args[0].String()
+		task, err := root.Lookup(taskID)
+		if err != nil || task == root {
+			return false
+		}
+		var tcpService fs.FS
+		if pageSvc := js.Global().Get("__ferruleosTcpService"); pageTCPCapable(pageSvc) {
+			// Page-owned service: all provider I/O happens in the page's pump
+			// loops; the kernel only composes the namespace (jsfs + data
+			// adapter). Prefer the factory so each grant gets an isolated
+			// conn-id space, like the tinygo per-grant service.
+			if factory := pageSvc.Get("create"); factory.Type() == js.TypeFunction {
+				if made := factory.Invoke(); pageTCPCapable(made) {
+					pageSvc = made
+				}
+			}
+			tcpService = newPageTCPService(pageSvc)
+		} else {
+			tcpService = tcp.New()
+		}
+		if err := grantNetwork(root, tcpService, taskID); err != nil {
+			return false
+		}
+		tcpServices[taskID] = tcpService
+		return true
+	}))
+
+	el.Set("_revokeNetwork", js.FuncOf(func(this js.Value, args []js.Value) any {
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return false
+		}
+		taskID := args[0].String()
+		tcpService, ok := tcpServices[taskID]
+		if !ok {
+			return false
+		}
+		if err := revokeNetwork(root, tcpService, taskID); err != nil {
+			return false
+		}
+		if closer, ok := tcpService.(interface{ CloseAll() }); ok {
+			closer.CloseAll()
+		}
+		delete(tcpServices, taskID)
+		return true
 	}))
 
 	el.Set("_open9P", js.FuncOf(func(this js.Value, args []js.Value) any {

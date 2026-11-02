@@ -25,7 +25,9 @@ func guard(h rpc.HandlerFunc) rpc.HandlerFunc {
 				_ = r.Return(fmt.Errorf("internal error: %v", rec))
 			}
 		}()
+		log.Printf("KDBG2 rpc: %s enter", c.Selector()) // KDBG2 (temporary live-pass instrumentation)
 		h(r, c)
+		log.Printf("KDBG2 rpc: %s handler-done", c.Selector()) // KDBG2 (temporary)
 	}
 }
 

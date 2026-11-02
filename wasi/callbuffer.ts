@@ -24,14 +24,12 @@ export class CallBuffer {
     }
 
     respond(value: any): void {
-        let buf;
-        if (value instanceof Uint8Array) {
-            const limit = Math.min(value.length, this.maxData);
-            buf = encode(value.slice(0, limit));
-        } else {
-            buf = encode(value);
+        const buf = encode(value);
+        if (buf.length > this.data.length) {
+            // Never write past the response slot, and never return silently
+            // truncated data: surface the overflow so the caller fails loudly.
+            throw new Error(`response (${buf.length} bytes) exceeds CallBuffer (${this.data.length} bytes)`);
         }
-        // TODO: check if it exceeds the buffer size
         this.len[0] = buf.length;
         this.data.set(buf, 0);
 
@@ -44,7 +42,11 @@ export class CallBuffer {
         params["method"] = method;
         postMessage(params);
         Atomics.wait(this.ctrl, 0, 0);
-        return decode(this.data.slice(0, this.len[0]));
+        const value = decode(this.data.slice(0, this.len[0]));
+        if (value && value.__wanix_error) {
+            throw new Error(value.__wanix_error);
+        }
+        return value;
     }
 
 }

@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"sync"
 
@@ -51,14 +52,17 @@ func (s *Service) rootFS() fskit.UnionFS {
 				ReadFunc: func(n *fskit.Node) error {
 					rid, err := s.Alloc()
 					if err != nil {
+						log.Printf("KDBG2 new: alloc error %v", err) // KDBG2 (temporary)
 						return err
 					}
 					if s.AllocHook != nil {
 						if err := s.AllocHook(s, rid); err != nil {
+							log.Printf("KDBG2 new: allochook error rid=%s %v", rid, err) // KDBG2 (temporary)
 							return err
 						}
 					}
 					fskit.SetData(n, []byte(rid+"\n"))
+					log.Printf("KDBG2 new: allocated rid=%s", rid) // KDBG2 (temporary)
 					return nil
 				},
 			}, nil
@@ -67,8 +71,11 @@ func (s *Service) rootFS() fskit.UnionFS {
 	return fskit.UnionFS{root, fskit.MapFS(s.resources)}
 }
 
-func (s *Service) Route(ctx context.Context, name string) (fs.FS, string, error) {
-	return s.rootFS().Route(ctx, name)
+func (s *Service) Route(_ context.Context, name string) (fs.FS, string, error) {
+	if !fs.ValidPath(name) {
+		return nil, "", &fs.PathError{Op: "route", Path: name, Err: fs.ErrInvalid}
+	}
+	return s, name, nil
 }
 
 func (s *Service) Get(rid string) (*Conn, error) {
@@ -101,5 +108,19 @@ func (s *Service) remove(rid string) {
 
 	if ok {
 		res.(*Conn).shutdown()
+	}
+}
+
+// CloseAll shuts down every connection when its owning task loses the network grant.
+func (s *Service) CloseAll() {
+	s.mu.RLock()
+	ids := make([]string, 0, len(s.resources))
+	for id := range s.resources {
+		ids = append(ids, id)
+	}
+	s.mu.RUnlock()
+	log.Printf("KDBG2 CloseAll: closing %d conns", len(ids)) // KDBG2 (temporary)
+	for _, id := range ids {
+		s.remove(id)
 	}
 }

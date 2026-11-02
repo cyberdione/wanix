@@ -28,15 +28,19 @@ func (s *syscaller) read(r rpc.Responder, c *rpc.Call) {
 	}
 
 	buf := make([]byte, count)
+	log.Printf("KDBG2 Read: task=%s fd=%d count=%d", s.task.ID(), fd, count) // KDBG2 (temporary live-pass instrumentation)
 	n, err := f.Read(buf)
 	if err == io.EOF {
+		log.Printf("KDBG2 Read: fd=%d -> n=%d EOF -> nil", fd, n) // KDBG2 (temporary)
 		r.Return(nil)
 		return
 	}
 	if err != nil {
+		log.Printf("KDBG2 Read: fd=%d -> err=%v", fd, err) // KDBG2 (temporary)
 		r.Return(err)
 		return
 	}
 
+	log.Printf("KDBG2 Read: fd=%d -> n=%d", fd, n) // KDBG2 (temporary)
 	r.Return(buf[:n])
 }

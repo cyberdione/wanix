@@ -32,7 +32,25 @@ export class WanixKernel {
         throw new Error("wasm not ready");
     }
 
+    grantNetwork(tid) {
+        return this._grantNetwork(tid);
+    }
+
+    revokeNetwork(tid) {
+        return this._revokeNetwork(tid);
+    }
+
     _openPort(tid = "") {
+        // replaced by wasm
+        throw new Error("wasm not ready");
+    }
+
+    _grantNetwork(tid) {
+        // replaced by wasm
+        throw new Error("wasm not ready");
+    }
+
+    _revokeNetwork(tid) {
         // replaced by wasm
         throw new Error("wasm not ready");
     }
