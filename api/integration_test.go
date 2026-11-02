@@ -29,9 +29,18 @@ func startTestServer(t *testing.T) *talk.Peer {
 		t.Fatal(err)
 	}
 	a, b := mux.Pair()
-	t.Cleanup(func() { a.Close(); b.Close() })
-	go Responder(a, root)
-	return talk.NewPeer(b, codec.CBORCodec{})
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		Responder(a, root)
+	}()
+	client := talk.NewPeer(b, codec.CBORCodec{})
+	t.Cleanup(func() {
+		_ = client.Close()
+		<-serverDone
+		_ = a.Close()
+	})
+	return client
 }
 
 type inertTaskDriver struct{}
@@ -54,9 +63,17 @@ func TestTaskSelfReadThroughResponder(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := mux.Pair()
-	t.Cleanup(func() { a.Close(); b.Close() })
-	go Responder(a, child)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		Responder(a, child)
+	}()
 	client := talk.NewPeer(b, codec.CBORCodec{})
+	t.Cleanup(func() {
+		_ = client.Close()
+		<-serverDone
+		_ = a.Close()
+	})
 	var id []byte
 	_, err = client.Call(context.Background(), "ReadFile", []any{"#task/self/id"}, &id)
 	if err != nil {
@@ -115,9 +132,17 @@ func TestWriteAtRoutesTaskStderrFDToBoundStream(t *testing.T) {
 	}
 
 	a, b := mux.Pair()
-	t.Cleanup(func() { a.Close(); b.Close() })
-	go Responder(a, root)
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		Responder(a, root)
+	}()
 	client := talk.NewPeer(b, codec.CBORCodec{})
+	t.Cleanup(func() {
+		_ = client.Close()
+		<-serverDone
+		_ = a.Close()
+	})
 	ctx := context.Background()
 	for _, part := range []struct {
 		data   string
