@@ -34,6 +34,39 @@ func startTestServer(t *testing.T) *talk.Peer {
 	return talk.NewPeer(b, codec.CBORCodec{})
 }
 
+type inertTaskDriver struct{}
+
+func (inertTaskDriver) Check(*wanix.Task) bool  { return false }
+func (inertTaskDriver) Start(*wanix.Task) error { return nil }
+
+func TestTaskSelfReadThroughResponder(t *testing.T) {
+	root, err := wanix.NewRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root.Register("test", inertTaskDriver{})
+	childID, err := fs.ReadFile(root.NS(), "#task/new/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := root.Lookup(string(bytes.TrimSpace(childID)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := mux.Pair()
+	t.Cleanup(func() { a.Close(); b.Close() })
+	go Responder(a, child)
+	client := talk.NewPeer(b, codec.CBORCodec{})
+	var id []byte
+	_, err = client.Call(context.Background(), "ReadFile", []any{"#task/self/id"}, &id)
+	if err != nil {
+		t.Fatalf("child ReadFile(#task/self/id): %v", err)
+	}
+	if string(id) != child.ID()+"\n" {
+		t.Fatalf("child id = %q, want %q", id, child.ID()+"\n")
+	}
+}
+
 func TestGuardRecoversPanic(t *testing.T) {
 	client := startTestServer(t)
 	ctx := context.Background()
