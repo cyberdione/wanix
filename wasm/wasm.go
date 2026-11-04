@@ -50,6 +50,8 @@ func main() {
 	}
 
 	tcpServices := make(map[string]fs.FS)
+	networkObservers := make(map[string]*networkObserver)
+	networkGrantGeneration := 0
 	sysbindings := []struct {
 		dst  string
 		fsys fs.FS
@@ -176,7 +178,7 @@ func main() {
 	}))
 
 	el.Set("_grantNetwork", js.FuncOf(func(this js.Value, args []js.Value) any {
-		if len(args) != 1 || args[0].Type() != js.TypeString {
+		if len(args) < 1 || len(args) > 2 || args[0].Type() != js.TypeString {
 			return false
 		}
 		taskID := args[0].String()
@@ -184,25 +186,57 @@ func main() {
 		if err != nil || task == root {
 			return false
 		}
+		if _, exists := tcpServices[taskID]; exists {
+			return false
+		}
+		callback := js.Undefined()
+		if len(args) == 2 {
+			if args[1].Type() != js.TypeObject || args[1].IsNull() {
+				return false
+			}
+			callback = args[1].Get("onConnection")
+			if !callback.IsUndefined() && callback.Type() != js.TypeFunction {
+				return false
+			}
+		}
+		networkGrantGeneration++
+		observer := newNetworkObserver(taskID, networkGrantGeneration, callback)
 		var tcpService fs.FS
 		if pageSvc := js.Global().Get("__ferruleosTcpService"); pageTCPCapable(pageSvc) {
 			// Page-owned service: all provider I/O happens in the page's pump
 			// loops; the kernel only composes the namespace (jsfs + data
 			// adapter). Prefer the factory so each grant gets an isolated
 			// conn-id space, like the tinygo per-grant service.
-			if factory := pageSvc.Get("create"); factory.Type() == js.TypeFunction {
-				if made := factory.Invoke(); pageTCPCapable(made) {
-					pageSvc = made
-				}
+			factory := pageSvc.Get("create")
+			if factory.Type() != js.TypeFunction {
+				observer.invalidate()
+				observer.receive.Release()
+				return false
 			}
+			made := factory.Invoke(map[string]any{"onConnection": observer.receive})
+			if !pageTCPCapable(made) {
+				observer.invalidate()
+				return false
+			}
+			pageSvc = made
 			tcpService = newPageTCPService(pageSvc)
 		} else {
+			if callback.Type() == js.TypeFunction {
+				observer.invalidate()
+				observer.receive.Release()
+				return false
+			}
 			tcpService = tcp.New()
 		}
 		if err := grantNetwork(root, tcpService, taskID); err != nil {
+			observer.invalidate()
+			if closer, ok := tcpService.(interface{ CloseAll() }); ok {
+				closer.CloseAll()
+			}
 			return false
 		}
 		tcpServices[taskID] = tcpService
+		networkObservers[taskID] = observer
 		return true
 	}))
 
@@ -216,13 +250,37 @@ func main() {
 			return false
 		}
 		if err := revokeNetwork(root, tcpService, taskID); err != nil {
-			return false
+			if _, lookupErr := root.Lookup(taskID); lookupErr == nil {
+				return false
+			}
+		}
+		if observer := networkObservers[taskID]; observer != nil {
+			observer.invalidate()
+			if page, ok := tcpService.(*pageTCPService); ok {
+				if detach := page.svc.Get("clearObserver"); detach.Type() == js.TypeFunction {
+					detach.Invoke()
+					observer.receive.Release()
+				}
+			} else {
+				observer.receive.Release()
+			}
+			delete(networkObservers, taskID)
 		}
 		if closer, ok := tcpService.(interface{ CloseAll() }); ok {
 			closer.CloseAll()
 		}
 		delete(tcpServices, taskID)
 		return true
+	}))
+
+	el.Set("_networkConnections", js.FuncOf(func(_ js.Value, args []js.Value) any {
+		if len(args) != 1 || args[0].Type() != js.TypeString {
+			return []any{}
+		}
+		if observer := networkObservers[args[0].String()]; observer != nil {
+			return observer.snapshot()
+		}
+		return []any{}
 	}))
 
 	el.Set("_open9P", js.FuncOf(func(this js.Value, args []js.Value) any {
