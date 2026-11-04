@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { decode } from "cbor-x";
+import { decode, encode } from "cbor-x";
 import { CallBuffer } from "../../wasi/worker/lib.js";
 
 const buffer = new SharedArrayBuffer(16384);
@@ -17,6 +17,22 @@ Atomics.store(ctrl, 0, 0);
 call.respond(new Uint8Array(call.maxData + 1));
 assert.equal(ctrl[0], 1);
 assert.deepEqual(response(), { __wanix_error: `CallBuffer response too large: ${call.maxData + 1} bytes exceeds ${call.maxData}-byte limit` });
+
+Atomics.store(ctrl, 0, 0);
+const encodedLimit = call.data.byteLength;
+const exactLimitValue = 'x'.repeat(encodedLimit - 3);
+assert.equal(encode(exactLimitValue).byteLength, encodedLimit);
+call.respond(exactLimitValue);
+assert.equal(ctrl[0], 1);
+assert.equal(response(), exactLimitValue);
+
+Atomics.store(ctrl, 0, 0);
+const tooLargeObject = { value: 'x'.repeat(encodedLimit) };
+const encodedSize = encode(tooLargeObject).byteLength;
+assert.ok(encodedSize > encodedLimit);
+call.respond(tooLargeObject);
+assert.equal(ctrl[0], 1);
+assert.deepEqual(response(), { __wanix_error: `CallBuffer encoded response too large: ${encodedSize} bytes exceeds ${encodedLimit}-byte limit` });
 
 Atomics.store(ctrl, 0, 0);
 call.respond({ value: 'ok' });
