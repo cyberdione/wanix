@@ -23,13 +23,14 @@ import (
 )
 
 type Resource struct {
-	id        int
-	state     string
-	src       string
-	worker    js.Value
-	task      *wanix.Task
-	callbacks []js.Func
-	stopped   bool
+	id          int
+	state       string
+	src         string
+	worker      js.Value
+	task        *wanix.Task
+	callbacks   []js.Func
+	exportPorts []js.Value
+	stopped     bool
 }
 
 type guestSetter interface {
@@ -61,6 +62,11 @@ func (r *Resource) stop() {
 		r.worker.Set("onmessageerror", js.Null())
 		r.worker.Call("terminate")
 	}
+	for _, port := range r.exportPorts {
+		port.Set("onmessage", js.Null())
+		port.Call("close")
+	}
+	r.exportPorts = nil
 	for _, cb := range r.callbacks {
 		cb.Release()
 	}
@@ -123,6 +129,11 @@ func (r *Resource) Start(args ...string) error {
 			if exportPort.IsUndefined() {
 				return
 			}
+			if r.stopped {
+				exportPort.Call("close")
+				return
+			}
+			r.exportPorts = append(r.exportPorts, exportPort)
 			exportPort.Set("onmessage", r.callback(func(this js.Value, _ []js.Value) any {
 				go func() {
 					// use initial signal message to mount export
