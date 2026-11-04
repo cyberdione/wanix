@@ -1,13 +1,16 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"testing"
 
 	"tractor.dev/toolkit-go/duplex/codec"
 	"tractor.dev/toolkit-go/duplex/mux"
 	"tractor.dev/toolkit-go/duplex/talk"
 	"tractor.dev/wanix"
+	"tractor.dev/wanix/fs/fskit"
 	"tractor.dev/wanix/fs/memfs"
 )
 
@@ -26,6 +29,40 @@ func startTestServer(t *testing.T) *talk.Peer {
 	t.Cleanup(func() { a.Close(); b.Close() })
 	go Responder(a, root)
 	return talk.NewPeer(b, codec.CBORCodec{})
+}
+
+func startTestServerWithTask(t *testing.T) (*talk.Peer, *wanix.Task) {
+	t.Helper()
+	root, err := wanix.NewRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := root.NS().Bind(memfs.New(), ".", "."); err != nil {
+		t.Fatal(err)
+	}
+	a, b := mux.Pair()
+	t.Cleanup(func() { a.Close(); b.Close() })
+	go Responder(a, root)
+	return talk.NewPeer(b, codec.CBORCodec{}), root
+}
+
+func TestReadReturnsBytesAlongsideEOF(t *testing.T) {
+	client, task := startTestServerWithTask(t)
+	fd := task.OpenFD(fskit.NewStreamFile(eofReader{Reader: bytes.NewReader([]byte("data"))}, nil, nil, fskit.Entry("stream", 0600)), "stream")
+	var got []byte
+	if _, err := client.Call(context.Background(), "Read", []any{uint64(fd), uint64(8)}, &got); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != "data" {
+		t.Fatalf("read = %q, want data", got)
+	}
+}
+
+type eofReader struct{ io.Reader }
+
+func (r eofReader) Read(p []byte) (int, error) {
+	n, _ := r.Reader.Read(p)
+	return n, io.EOF
 }
 
 func TestGuardRecoversPanic(t *testing.T) {

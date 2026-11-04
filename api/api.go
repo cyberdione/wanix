@@ -2,7 +2,6 @@ package api
 
 import (
 	"fmt"
-	"log"
 
 	"tractor.dev/toolkit-go/duplex/codec"
 	"tractor.dev/toolkit-go/duplex/mux"
@@ -21,13 +20,10 @@ func guard(h rpc.HandlerFunc) rpc.HandlerFunc {
 	return func(r rpc.Responder, c *rpc.Call) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("api: recovered panic in %s: %v", c.Selector(), rec)
 				_ = r.Return(fmt.Errorf("internal error: %v", rec))
 			}
 		}()
-		log.Printf("KDBG2 rpc: %s enter", c.Selector()) // KDBG2 (temporary live-pass instrumentation)
 		h(r, c)
-		log.Printf("KDBG2 rpc: %s handler-done", c.Selector()) // KDBG2 (temporary)
 	}
 }
 

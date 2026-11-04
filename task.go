@@ -40,26 +40,27 @@ type TaskDriver interface {
 }
 
 type Task struct {
-	driver  TaskDriver
-	parent  *Task
-	ns      *vfs.NS
-	id      int
-	alias   string
-	kind    string
-	cmd     string
-	args    []string
-	env     []string
-	exit    string
-	dir     string
-	fds     map[int]*openFile
-	fdIdx   int
-	cleanup []func()
-	exited  bool
-	cancel  context.CancelFunc
-	fsys    *TaskFS
-	worker  any
-	export  fs.FS
-	mu      sync.Mutex
+	driver    TaskDriver
+	parent    *Task
+	ns        *vfs.NS
+	id        int
+	alias     string
+	kind      string
+	cmd       string
+	args      []string
+	env       []string
+	exit      string
+	dir       string
+	fds       map[int]*openFile
+	closedFDs map[int]bool
+	fdIdx     int
+	cleanup   []func()
+	exited    bool
+	cancel    context.CancelFunc
+	fsys      *TaskFS
+	worker    any
+	export    fs.FS
+	mu        sync.Mutex
 }
 
 func Export(t *Task, export fs.FS) {
@@ -255,6 +256,9 @@ func (r *Task) CloseFD(fd int) error {
 		return fs.ErrInvalid
 	}
 	delete(r.fds, fd)
+	if fd >= 0 && fd < 3 {
+		r.closedFDs[fd] = true
+	}
 	r.mu.Unlock()
 	return f.file.Close()
 }
@@ -269,14 +273,19 @@ func (r *Task) FD(fd int) (fs.File, string, error) {
 		return nil, "", fs.ErrInvalid
 	}
 	if fd < 3 {
-		name := fmt.Sprintf("#task/%s/fd/%d", r.ID(), fd)
-		// this should probably use #task/self but i think there are some
-		// issues to work out for that to work correctly here.
-		stdfile, err := r.NS().Open(name)
-		if err != nil {
-			return nil, "", err
+		if r.closedFDs[fd] {
+			return nil, "", fs.ErrInvalid
 		}
-		r.fds[fd] = &openFile{file: stdfile, path: name}
+		if _, ok := r.fds[fd]; !ok {
+			name := fmt.Sprintf("#task/%s/fd/%d", r.ID(), fd)
+			// Resolve once, after namespace setup, then retain the exact file
+			// until it is explicitly closed or the task exits.
+			stdfile, err := r.NS().Open(name)
+			if err != nil {
+				return nil, "", err
+			}
+			r.fds[fd] = &openFile{file: stdfile, path: name}
+		}
 	}
 	f, ok := r.fds[fd]
 	if !ok {
@@ -456,12 +465,13 @@ func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
 	rid := strconv.Itoa(d.nextID)
 
 	p := &Task{
-		fsys:   d,
-		driver: driver,
-		id:     d.nextID,
-		kind:   kind,
-		fds:    make(map[int]*openFile),
-		fdIdx:  3,
+		fsys:      d,
+		driver:    driver,
+		id:        d.nextID,
+		kind:      kind,
+		fds:       make(map[int]*openFile),
+		closedFDs: make(map[int]bool),
+		fdIdx:     3,
 	}
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), TaskContextKey, p))
 	p.cancel = cancel

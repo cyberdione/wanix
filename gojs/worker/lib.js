@@ -4116,22 +4116,49 @@ var WanixHandle = class {
   }
   writable(fd) {
     const self = this;
+    let closed = false;
+    let closing;
+    const closeFD = () => {
+      if (!closing) {
+        closed = true;
+        closing = Promise.resolve().then(() => self.close(fd));
+      }
+      return closing;
+    };
     return new WritableStream({
       write(chunk) {
+        if (closed) {
+          throw new TypeError("write to closed Wanix stream");
+        }
         return self.write(fd, chunk);
-      }
+      },
+      close: closeFD,
+      abort: closeFD
     });
   }
   readable(fd) {
     const self = this;
+    let closed = false;
+    let closing;
+    const closeFD = () => {
+      if (!closing) {
+        closed = true;
+        closing = Promise.resolve().then(() => self.close(fd));
+      }
+      return closing;
+    };
     return new ReadableStream({
       async pull(controller) {
         const data = await self.read(fd, 1024);
+        if (closed) return;
         if (data === null) {
+          await closeFD();
           controller.close();
+          return;
         }
         controller.enqueue(data);
-      }
+      },
+      cancel: closeFD
     });
   }
 };
