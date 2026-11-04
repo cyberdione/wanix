@@ -2,6 +2,7 @@ package pipe
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"sync"
 )
@@ -33,16 +34,23 @@ func (bp *Buffer) Write(data []byte) (int, error) {
 	return n, err
 }
 
-func (bp *Buffer) Read(p []byte) (int, error) {
+func (bp *Buffer) Read(p []byte) (int, error) { return bp.ReadContext(context.Background(), p) }
+
+func (bp *Buffer) ReadContext(ctx context.Context, p []byte) (int, error) {
+	stop := context.AfterFunc(ctx, func() { bp.mu.Lock(); bp.dataCond.Broadcast(); bp.mu.Unlock() })
+	defer stop()
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
 
 	if bp.block {
-		for bp.buffer.Len() == 0 && !bp.closed {
+		for bp.buffer.Len() == 0 && !bp.closed && ctx.Err() == nil {
 			bp.dataCond.Wait()
 		}
 	}
 
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	if bp.closed && bp.buffer.Len() == 0 {
 		return 0, io.EOF
 	}

@@ -1,6 +1,7 @@
 package pipe
 
 import (
+	"context"
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/fs/fskit"
 )
@@ -27,6 +28,11 @@ var _ fs.File = (*PortFile)(nil)
 func (pf *PortFile) Close() error { return nil }
 
 func (pf *PortFile) Read(b []byte) (int, error) { return pf.Port.Read(b) }
+
+// ReadContext cancels one reader without closing the shared terminal endpoint.
+func (pf *PortFile) ReadContext(ctx context.Context, b []byte) (int, error) {
+	return pf.Port.reader.ReadContext(ctx, b)
+}
 
 func (pf *PortFile) Stat() (fs.FileInfo, error) {
 	return fskit.Entry(pf.Name, fs.FileMode(0644), int64(pf.Port.Size())), nil

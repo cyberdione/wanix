@@ -21,7 +21,7 @@ type FS struct {
 
 var (
 	_ fs.FS            = (*FS)(nil)
-	_ fs.RouteFS     = (*FS)(nil)
+	_ fs.RouteFS       = (*FS)(nil)
 	_ fs.OpenFileFS    = (*FS)(nil)
 	_ fs.OpenContextFS = (*FS)(nil)
 )
@@ -84,18 +84,26 @@ func (r *reader) subscribe() {
 }
 
 func (r *reader) Read(p []byte) (int, error) {
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return 0, fs.ErrClosed
+	}
 	r.subscribe()
+	if len(r.buf) > 0 {
+		n := copy(p, r.buf)
+		r.buf = r.buf[n:]
+		r.mu.Unlock()
+		return n, nil
+	}
+	ch := r.ch
+	r.mu.Unlock()
+	frame, ok := <-ch
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
 		return 0, fs.ErrClosed
 	}
-	if len(r.buf) > 0 {
-		n := copy(p, r.buf)
-		r.buf = r.buf[n:]
-		return n, nil
-	}
-	frame, ok := <-r.ch
 	if !ok {
 		return 0, io.EOF
 	}

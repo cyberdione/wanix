@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"io"
 	"log"
 
@@ -29,7 +30,14 @@ func (s *syscaller) read(r rpc.Responder, c *rpc.Call) {
 
 	buf := make([]byte, count)
 	log.Printf("KDBG2 Read: task=%s fd=%d count=%d", s.task.ID(), fd, count) // KDBG2 (temporary live-pass instrumentation)
-	n, err := f.Read(buf)
+	var n int
+	if reader, ok := f.(interface {
+		ReadContext(context.Context, []byte) (int, error)
+	}); ok {
+		n, err = reader.ReadContext(s.task.Context(), buf)
+	} else {
+		n, err = f.Read(buf)
+	}
 	if err == io.EOF {
 		log.Printf("KDBG2 Read: fd=%d -> n=%d EOF -> nil", fd, n) // KDBG2 (temporary)
 		r.Return(nil)

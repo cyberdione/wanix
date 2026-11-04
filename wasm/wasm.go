@@ -237,6 +237,12 @@ func main() {
 		}
 		tcpServices[taskID] = tcpService
 		networkObservers[taskID] = observer
+		task.AddCleanup(func() {
+			// A later grant must never be revoked by an older grant's cleanup.
+			if networkObservers[taskID] == observer {
+				el.Call("_revokeNetwork", taskID)
+			}
+		})
 		return true
 	}))
 
