@@ -1,4 +1,5 @@
 import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
+import { FileDescription } from "./file-description.js";
 
 // Linux-personality task worker for Wanix. Two roles, like the wasi worker:
 //  1) task worker: receives {worker:{port,tid,url}}, reads cmd/env/bin from the
@@ -233,19 +234,26 @@ async function runLinux(e, caller) {
             const n = handle.write(data);
             return n ?? 0;
         }
-        case 65: { // readv(fd, iov, iovcnt) — scatter stdin text
+        case 65: { // readv: sequential reads into the supplied vectors
             const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
             const vv = v(), uu = u();
-            if (cnt > 1024 || iov > uu.length || cnt * 8 > uu.length - iov) return -14;
-            if (fd !== 0 || stdinText === null) return -38;
-            let total = 0;
+            if (cnt < 0 || cnt > 1024) return -22;
+            if (iov > uu.length || cnt * 8 > uu.length - iov) return -14;
+            const vectors = [];
             for (let i = 0; i < cnt; i++) {
-                const base = vv.getUint32(iov + 8 * i, true), len = vv.getUint32(iov + 8 * i + 4, true);
-                const chunk = stdinText.slice(stdinPos, stdinPos + len);
-                stdinPos += chunk.length;
-                if (chunk) uu.set(new TextEncoder().encode(chunk), base);
-                total += chunk.length;
-                if (chunk.length < len) break;
+                const base = vv.getUint32(iov + 8 * i, true);
+                const len = vv.getUint32(iov + 8 * i + 4, true);
+                if (base > uu.length || len > uu.length - base) return -14;
+                vectors.push([base, len]);
+            }
+            if (!(streams[fd] ?? openFiles.get(fd)) && !(fd === 0 && stdinText !== null)) return -9;
+            let total = 0;
+            for (const [base, len] of vectors) {
+                if (!len) continue;
+                const n = __syscall(63, fd, base, len, 0, 0, 0);
+                if (n < 0) return total || n;
+                total += n;
+                if (n < len) break;
             }
             return total;
         }
@@ -272,7 +280,7 @@ async function runLinux(e, caller) {
             const handle = new FileHandle(caller, target);
             try { handle.open(); } catch (_) { return -13; }
             const fd = nextFd++;
-            openFiles.set(fd, handle);
+            openFiles.set(fd, new FileDescription(handle));
             return fd;
         }
         case 63: { // read(fd, buf, count) — task-provided stdin text or streams
@@ -284,11 +292,11 @@ async function runLinux(e, caller) {
                 if (chunk) uu.set(new TextEncoder().encode(chunk), buf);
                 return chunk.length; // 0 at EOF
             }
-            const h = streams[fd];
+            const h = streams[fd] ?? openFiles.get(fd);
             if (!h) return -9;
-            const got = h.read(new Uint8Array(count));
-            const n = Array.isArray(got) ? got.length : (got?.byteLength ?? (got ? got.length : 0));
-            if (n > 0) uu.set(got.subarray ? got.subarray(0, n) : new Uint8Array(got).subarray(0, n), buf);
+            const data = new Uint8Array(count);
+            const n = h.read(data);
+            if (n > 0) uu.set(data.subarray(0, n), buf);
             return n;
         }
         case 57: { const h = openFiles.get(a[0]); if (!h) return -9; h.close(); openFiles.delete(a[0]); return 0; }
@@ -299,13 +307,8 @@ async function runLinux(e, caller) {
             if (whence < 0 || whence > 2) return -22;
             const uu = u(), vv = v();
             if (res + 8 > uu.length) return -14;
-            // offsets tracked client-side per fd (diagnostic)
-            const key = `off:${fd}`;
-            const cur = (self[key] ?? 0);
-            const size = Number(h.getSize?.() ?? 0);
-            const pos = whence === 0 ? off : whence === 1 ? cur + off : size + off;
-            if (pos < 0) return -22;
-            self[key] = pos;
+            const pos = h.seek(off, whence);
+            if (pos < 0) return pos;
             vv.setBigUint64(res, BigInt(pos), true);
             return 0;
         }
@@ -330,23 +333,15 @@ async function runLinux(e, caller) {
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
         case 214: return a[0] | 0;  // brk (diagnostic)
-        case 222: { // mmap: anonymous arena, or file-backed (copy-in) for open task files
-            const len = a[1] >>> 0, flags = a[3] | 0, fd = a[4] | 0, off = (a[5] >>> 0);
-            const anon = (flags & 0x20) !== 0 && fd === -1;
-            const h = openFiles.get(fd);
-            if (!anon && !h) return -38;
+        case 222: { // diagnostic anonymous arena; file mappings are unsupported
+            const len = a[1] >>> 0, flags = a[3] | 0, fd = a[4] | 0;
+            if (!(flags & 0x20) || fd !== -1) return -38;
             const m = inst.exports.memory;
             const pages = Math.ceil(Math.max(len, 1) / 65536);
             const basePages = m.buffer.byteLength / 65536;
             if (basePages + pages > memoryBytes / 65536) return -12;
             m.grow(pages);
-            const base = basePages * 65536;
-            if (!anon) {
-                // copy the file contents in (MAP_PRIVATE semantics: private copy)
-                const got = h.read(new Uint8Array(Math.min(len, 1 << 20)), { at: off });
-                if (got && got.length) new Uint8Array(m.buffer, base, got.length).set(got);
-            }
-            return base;
+            return basePages * 65536;
         }
         case 226: case 215: return 0;
         case 93: case 94: exitCode = a[0] & 255; throw { kind: "exit" };
