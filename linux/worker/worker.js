@@ -8,6 +8,21 @@ import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
 
 const TASKNS = "#task";
 
+// split a cmd line on spaces, honoring single/double quotes (mirrors the
+// wanix task element's env parsing) so `rc -c 'echo hi'` keeps one argument
+function splitCmdQuoted(line) {
+    const out = [];
+    let cur = "", q = null;
+    for (const ch of line) {
+        if (q) { if (ch === q) q = null; else cur += ch; }
+        else if (ch === "'" || ch === '"') q = ch;
+        else if (ch === " ") { if (cur) { out.push(cur); cur = ""; } }
+        else cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+}
+
 self.onmessage = async (e) => {
     if (e.data.worker) {
         console.log("linux task worker started");
@@ -38,7 +53,7 @@ async function initializeTaskWorker(e) {
     const fs = new WanixHandle(e.data.worker.port);
     const tid = e.data.worker.tid;
     const env = (await fs.readText(`${TASKNS}/${tid}/env`)).trim().split("\n").filter(line => line.includes("="));
-    const args = (await fs.readText(`${TASKNS}/${tid}/cmd`)).trim().split(" ");
+    const args = splitCmdQuoted((await fs.readText(`${TASKNS}/${tid}/cmd`)).trim());
     let bin;
     try {
         bin = await fs.readFile(args[0]);
@@ -46,6 +61,8 @@ async function initializeTaskWorker(e) {
         await reportTaskFailure(fs, tid, err);
         return;
     }
+    let stdinText = null;
+    try { stdinText = await fs.readText(`${TASKNS}/${tid}/w/stdin.txt`); } catch (_) {}
     const buffer = new SharedArrayBuffer(16384);
     const call = new CallBuffer(buffer);
     const worker = new Worker(e.data.worker.url, {type: "module"});
@@ -61,6 +78,7 @@ async function initializeTaskWorker(e) {
         stdout: `${TASKNS}/${tid}/fd/1`,
         stderr: `${TASKNS}/${tid}/fd/2`,
         tid,
+        stdinText,
     });
 }
 
@@ -72,6 +90,11 @@ function messageHandler(fs, call, tid) {
             case "path_open": {
                 const fd = await fs.open(e.data.path);
                 call.respond(fd);
+                break;
+            }
+            case "path_size": {
+                const stat = await fs.stat(e.data.path);
+                call.respond(stat?.Size ?? 0);
                 break;
             }
             case "path_touch":
@@ -159,11 +182,14 @@ function buildInitialStack(memory, base, capacity, argv, envp) {
 
 async function runLinux(e, caller) {
     const tid = e.data.tid;
+    const stdinText = e.data.stdinText ?? null;
+    let stdinPos = 0;
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
     const memoryBytes = 16 * 1024 * 1024;
     const streams = {};
-    for (const [fd, path] of [[1, e.data.stdout], [2, e.data.stderr]]) {
+    for (const [fd, path] of [[0, e.data.stdin], [1, e.data.stdout], [2, e.data.stderr]]) {
+        if (!path) continue;
         const h = new FileHandle(caller, path);
         h.open();
         streams[fd] = h;
@@ -174,6 +200,13 @@ async function runLinux(e, caller) {
     let inst;
 
     function syscall(nr, a0, a1, a2, a3, a4, a5) {
+        const a = [a0 | 0, a1 | 0, a2 | 0, a3 | 0, a4 | 0, a5 | 0];
+        const u = () => new Uint8Array(inst.exports.memory.buffer);
+        const v = () => new DataView(inst.exports.memory.buffer);
+        const __r = __syscall(nr, a0, a1, a2, a3, a4, a5);
+        return __r;
+    }
+    function __syscall(nr, a0, a1, a2, a3, a4, a5) {
         const a = [a0 | 0, a1 | 0, a2 | 0, a3 | 0, a4 | 0, a5 | 0];
         const u = () => new Uint8Array(inst.exports.memory.buffer);
         const v = () => new DataView(inst.exports.memory.buffer);
@@ -200,6 +233,22 @@ async function runLinux(e, caller) {
             const n = handle.write(data);
             return n ?? 0;
         }
+        case 65: { // readv(fd, iov, iovcnt) — scatter stdin text
+            const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
+            const vv = v(), uu = u();
+            if (cnt > 1024 || iov > uu.length || cnt * 8 > uu.length - iov) return -14;
+            if (fd !== 0 || stdinText === null) return -38;
+            let total = 0;
+            for (let i = 0; i < cnt; i++) {
+                const base = vv.getUint32(iov + 8 * i, true), len = vv.getUint32(iov + 8 * i + 4, true);
+                const chunk = stdinText.slice(stdinPos, stdinPos + len);
+                stdinPos += chunk.length;
+                if (chunk) uu.set(new TextEncoder().encode(chunk), base);
+                total += chunk.length;
+                if (chunk.length < len) break;
+            }
+            return total;
+        }
         case 64: { // write(fd, buf, count)
             const fd = a[0], buf = a[1] >>> 0, count = a[2] >>> 0, uu = u();
             if (buf > uu.length || count > uu.length - buf) return -14;
@@ -215,8 +264,9 @@ async function runLinux(e, caller) {
             const p = raw.replace(/^\/+/, "");
             if (p === "" || p.split("/").some(seg => seg === ".." || seg === "")) return -13;
             // capability restriction: only the pre-authorized scratch file
-            if (p !== "out.txt") return -13;
-            const target = `${TASKNS}/${tid}/w/${p}`;
+            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
+            if (p !== "out.txt" && !scratch) return -13;
+            const target = `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}`;
             const created = caller.call("path_touch", { path: target });
             if (created && created.__wanix_error) return -13;
             const handle = new FileHandle(caller, target);
@@ -225,19 +275,78 @@ async function runLinux(e, caller) {
             openFiles.set(fd, handle);
             return fd;
         }
+        case 63: { // read(fd, buf, count) — task-provided stdin text or streams
+            const fd = a[0], buf = a[1] >>> 0, count = a[2] >>> 0, uu = u();
+            if (buf > uu.length || count > uu.length - buf) return -14;
+            if (fd === 0 && stdinText !== null) {
+                const chunk = stdinText.slice(stdinPos, stdinPos + count);
+                stdinPos += chunk.length;
+                if (chunk) uu.set(new TextEncoder().encode(chunk), buf);
+                return chunk.length; // 0 at EOF
+            }
+            const h = streams[fd];
+            if (!h) return -9;
+            const got = h.read(new Uint8Array(count));
+            const n = Array.isArray(got) ? got.length : (got?.byteLength ?? (got ? got.length : 0));
+            if (n > 0) uu.set(got.subarray ? got.subarray(0, n) : new Uint8Array(got).subarray(0, n), buf);
+            return n;
+        }
         case 57: { const h = openFiles.get(a[0]); if (!h) return -9; h.close(); openFiles.delete(a[0]); return 0; }
+        case 62: { // _llseek(fd, off_hi, off_lo, result_ptr, whence) — open files only
+            const fd = a[0] | 0, off = (a[1] * 4294967296) + (a[2] >>> 0), res = a[3] >>> 0, whence = a[4] | 0;
+            const h = openFiles.get(fd);
+            if (!h) return -9;
+            if (whence < 0 || whence > 2) return -22;
+            const uu = u(), vv = v();
+            if (res + 8 > uu.length) return -14;
+            // offsets tracked client-side per fd (diagnostic)
+            const key = `off:${fd}`;
+            const cur = (self[key] ?? 0);
+            const size = Number(h.getSize?.() ?? 0);
+            const pos = whence === 0 ? off : whence === 1 ? cur + off : size + off;
+            if (pos < 0) return -22;
+            self[key] = pos;
+            vv.setBigUint64(res, BigInt(pos), true);
+            return 0;
+        }
+        case 291: { // statx(dirfd, path, flags, mask, buf) — minimal regular-file
+            const uu = u(), vv = v(), buf = a[3] >>> 0, pathPtr = (a[1] >>> 0);
+            let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
+            const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
+            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
+            if (p !== "out.txt" && !scratch) return -13;
+            if (buf + 256 > uu.length) return -14;
+            uu.fill(0, buf, buf + 256);
+            vv.setUint32(buf + 0, 0x7ff, true);
+            vv.setUint32(buf + 4, 4096, true);
+            vv.setUint32(buf + 12, 1, true);
+            vv.setUint32(buf + 24, 33188, true);
+            vv.setBigUint64(buf + 28, 42n, true);
+            const size = Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
+            vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
+            return 0;
+        }
+        case 87: case 35: return 0; // unlink of scratch: report success
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
         case 214: return a[0] | 0;  // brk (diagnostic)
-        case 222: { // mmap: anonymous-private arena in fresh pages
-            const len = a[1] >>> 0, flags = a[3] | 0, fd = a[4] | 0;
-            if (!((flags & 0x20) !== 0 && fd === -1)) return -38;
+        case 222: { // mmap: anonymous arena, or file-backed (copy-in) for open task files
+            const len = a[1] >>> 0, flags = a[3] | 0, fd = a[4] | 0, off = (a[5] >>> 0);
+            const anon = (flags & 0x20) !== 0 && fd === -1;
+            const h = openFiles.get(fd);
+            if (!anon && !h) return -38;
             const m = inst.exports.memory;
             const pages = Math.ceil(Math.max(len, 1) / 65536);
             const basePages = m.buffer.byteLength / 65536;
             if (basePages + pages > memoryBytes / 65536) return -12;
             m.grow(pages);
-            return basePages * 65536;
+            const base = basePages * 65536;
+            if (!anon) {
+                // copy the file contents in (MAP_PRIVATE semantics: private copy)
+                const got = h.read(new Uint8Array(Math.min(len, 1 << 20)), { at: off });
+                if (got && got.length) new Uint8Array(m.buffer, base, got.length).set(got);
+            }
+            return base;
         }
         case 226: case 215: return 0;
         case 93: case 94: exitCode = a[0] & 255; throw { kind: "exit" };
