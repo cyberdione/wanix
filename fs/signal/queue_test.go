@@ -263,3 +263,36 @@ func TestQueueFSReaderCloseDoesNotAllowReplacementReader(t *testing.T) {
 		t.Fatalf("reader reopened after close: %v", err)
 	}
 }
+
+func TestQueueAllocatorOpenContextRoutesTaskCancellation(t *testing.T) {
+	a := &QueueAllocator{MaxBytes: 8, MaxQueues: 1}
+	nf, err := a.Open("new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 40)
+	n, err := nf.Read(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := string(b[:n-1])
+	ctx, cancel := context.WithCancel(context.Background())
+	rf, err := fs.OpenContext(ctx, a, id+"/read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, e := rf.Read(make([]byte, 1)); done <- e }()
+	cancel()
+	select {
+	case e := <-done:
+		if !errors.Is(e, context.Canceled) {
+			t.Fatalf("task-context read = %v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("task cancellation did not wake filesystem read")
+	}
+	if _, err = a.Open(id + "/write"); err != fs.ErrNotExist {
+		t.Fatalf("task exit did not reclaim allocator entry: %v", err)
+	}
+}
