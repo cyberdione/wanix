@@ -65,17 +65,15 @@ func (q *QueueFS) OpenContext(ctx context.Context, name string) (fs.File, error)
 		return r, nil
 	case "write":
 		q.mu.Lock()
-		closed := q.closed
-		q.mu.Unlock()
-		if closed {
+		defer q.mu.Unlock()
+		if q.closed {
 			return nil, fs.ErrNotExist
 		}
 		return &queueWriter{q: q}, nil
 	case "ctl":
 		q.mu.Lock()
-		closed := q.closed
-		q.mu.Unlock()
-		if closed {
+		defer q.mu.Unlock()
+		if q.closed {
 			return nil, fs.ErrNotExist
 		}
 		return &queueControl{q: q}, nil
