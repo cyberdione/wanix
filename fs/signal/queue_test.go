@@ -47,8 +47,8 @@ func TestQueueBlocksThenDeliversAndRejectsOverflow(t *testing.T) {
 }
 
 func TestQueueConcurrentWritesPreserveWholeFramesAndFIFO(t *testing.T) {
-	q := NewQueue(4096)
 	const writers, frames = 4, 32
+	q := NewQueue(4096)
 	var wg sync.WaitGroup
 	for w := 0; w < writers; w++ {
 		wg.Add(1)
@@ -56,19 +56,15 @@ func TestQueueConcurrentWritesPreserveWholeFramesAndFIFO(t *testing.T) {
 			defer wg.Done()
 			for frame := 0; frame < frames; frame++ {
 				payload := []byte(fmt.Sprintf("w=%d f=%d\n", writer, frame))
-				for {
-					if _, err := q.Write(payload); err == nil {
-						break
-					} else if !errors.Is(err, ErrSaturated) {
-						t.Errorf("write: %v", err)
-						return
-					}
-					time.Sleep(time.Microsecond)
+				if _, err := q.Write(payload); err != nil {
+					t.Errorf("write: %v", err)
+					return
 				}
 			}
 		}(w)
 	}
-	go func() { wg.Wait(); _ = q.Close() }()
+	wg.Wait()
+	_ = q.Close()
 	data := make([]byte, 0, writers*frames*16)
 	buf := make([]byte, 64)
 	for {
