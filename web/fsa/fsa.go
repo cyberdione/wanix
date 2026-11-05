@@ -8,6 +8,7 @@ import (
 	"path"
 	"sync"
 	"syscall/js"
+	"time"
 
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/misc/jsutil"
@@ -21,6 +22,29 @@ func ShowDirectoryPicker() fs.FS {
 
 var opfsSingleton *FS
 var opfsMu sync.Mutex
+
+// opfsTimeoutMs bounds the OPFS handshake. On opaque origins (e.g. file://)
+// navigator.storage.getDirectory() can pend forever; boot must not.
+var opfsTimeoutMs = 3000
+
+// awaitBounded awaits a js promise, failing after ms if it never settles.
+func awaitBounded(p js.Value, ms int) (js.Value, error) {
+	type result struct {
+		val js.Value
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		v, err := jsutil.AwaitErr(p)
+		ch <- result{v, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.val, r.err
+	case <-time.After(time.Duration(ms) * time.Millisecond):
+		return js.Undefined(), errors.New("opfs handshake timed out")
+	}
+}
 
 // origin private file system
 // OPFS returns a filesystem for the Origin Private File System.
@@ -38,7 +62,7 @@ func OPFS(pathParts ...string) (fs.FS, error) {
 		if js.Global().Get("navigator").Get("storage").IsUndefined() {
 			return nil, errors.New("navigator.storage is undefined")
 		}
-		rootDir, err := jsutil.AwaitErr(js.Global().Get("navigator").Get("storage").Call("getDirectory"))
+		rootDir, err := awaitBounded(js.Global().Get("navigator").Get("storage").Call("getDirectory"), opfsTimeoutMs)
 		if err != nil {
 			return nil, err
 		}

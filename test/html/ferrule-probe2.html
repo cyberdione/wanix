@@ -1,0 +1,17 @@
+<html><head><script>
+function xhrText(url){return new Promise((res,rej)=>{const x=new XMLHttpRequest();x.open("GET",url);x.onload=()=>res(x.responseText);x.onerror=()=>rej(new Error("xhr failed "+url+" status="+x.status));x.send();});}
+window.__log=[];window.__err=null;
+window.addEventListener("error",e=>{window.__err="win:"+e.message;});
+window.addEventListener("unhandledrejection",e=>{window.__err="rej:"+((e.reason&&e.reason.message)||e.reason);});
+(async()=>{
+ try{
+  const src=await xhrText("../../dist/wanix.min.js");
+  const patched=src.replaceAll("import.meta.url",JSON.stringify(location.href)).replaceAll("import.meta",JSON.stringify(location.href));
+  const blob=new Blob([patched],{type:"text/javascript"});
+  await import(URL.createObjectURL(blob));
+  await new Promise(r=>setTimeout(r,300));
+  window.__log.push("task="+!!customElements.get("wanix-task")+" err="+window.__err);
+ }catch(e){window.__log.push("ERR "+e.message);}
+ document.title="P4 "+window.__log.join(" | ");
+})();
+</script></head><body>probe</body></html>

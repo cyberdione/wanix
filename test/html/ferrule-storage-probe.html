@@ -1,0 +1,9 @@
+<html><head><script>
+document.addEventListener("DOMContentLoaded",async()=>{
+ const out=[];
+ const t=setTimeout(()=>{document.title="SP TIMEOUT "+out.join("|");},15000);
+ try{const d=await navigator.storage.getDirectory();out.push("opfs:OK");}catch(e){out.push("opfs:ERR "+e.message);}
+ try{if(!window.caches){out.push("caches:UNDEF");}else{const c=await caches.open("x");out.push("caches:OK");}}catch(e){out.push("caches:ERR "+e.message);}
+ clearTimeout(t);document.title="SP "+out.join("|");
+});
+</script></head><body>x</body></html>

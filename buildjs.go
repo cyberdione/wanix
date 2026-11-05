@@ -67,6 +67,16 @@ func main() {
 		build(wasiOpts)
 	}()
 
+	// The linux worker shares the wasi worker library surface
+	// (WanixHandle/CallBuffer/FileHandle); copy the bundle in place.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wasiOpts := wasiOpts
+		wasiOpts.Outfile = "linux/worker/lib.js"
+		build(wasiOpts)
+	}()
+
 	gojsOpts := opts
 	gojsOpts.EntryPoints = []string{"gojs/mod.ts"}
 	gojsOpts.Outfile = "gojs/worker/lib.js"
@@ -79,7 +89,7 @@ func main() {
 
 	wg.Wait()
 
-	for _, path := range []string{"gojs/worker/lib.js", "wasi/worker/lib.js"} {
+	for _, path := range []string{"gojs/worker/lib.js", "wasi/worker/lib.js", "linux/worker/lib.js"} {
 		if err := patchCSPDecoder(path); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
