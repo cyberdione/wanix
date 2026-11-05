@@ -60,6 +60,7 @@ async function initializeTaskWorker(e) {
         stdin: `${TASKNS}/${tid}/fd/0`,
         stdout: `${TASKNS}/${tid}/fd/1`,
         stderr: `${TASKNS}/${tid}/fd/2`,
+        tid,
     });
 }
 
@@ -73,6 +74,10 @@ function messageHandler(fs, call, tid) {
                 call.respond(fd);
                 break;
             }
+            case "path_touch":
+                await fs.writeFile(e.data.path, "");
+                call.respond(true);
+                break;
             case "fd_close":
                 await fs.close(e.data.fd);
                 call.respond(true);
@@ -109,7 +114,13 @@ function messageHandler(fs, call, tid) {
 }
 
 function extractWasm(bin) {
-    const b = new Uint8Array(bin);
+    const b0 = new Uint8Array(bin);
+    // production payloads are raw wasm modules; the private ELF envelope is
+    // also accepted for diagnostic artifacts
+    if (b0.length > 8 && b0[0] === 0x00 && b0[1] === 0x61 && b0[2] === 0x73 && b0[3] === 0x6d) {
+        return b0;
+    }
+    const b = b0;
     const hex = (bb, o, n) => Array.from(bb.subarray(o, o + n)).map(x => x.toString(16).padStart(2, "0")).join("");
     const u16 = o => (b[o] | (b[o + 1] << 8)) >>> 0;
     const u32 = o => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
@@ -147,6 +158,7 @@ function buildInitialStack(memory, base, capacity, argv, envp) {
 }
 
 async function runLinux(e, caller) {
+    const tid = e.data.tid;
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
     const memoryBytes = 16 * 1024 * 1024;
@@ -204,7 +216,10 @@ async function runLinux(e, caller) {
             if (p === "" || p.split("/").some(seg => seg === ".." || seg === "")) return -13;
             // capability restriction: only the pre-authorized scratch file
             if (p !== "out.txt") return -13;
-            const handle = new FileHandle(caller, p);
+            const target = `${TASKNS}/${tid}/w/${p}`;
+            const created = caller.call("path_touch", { path: target });
+            if (created && created.__wanix_error) return -13;
+            const handle = new FileHandle(caller, target);
             try { handle.open(); } catch (_) { return -13; }
             const fd = nextFd++;
             openFiles.set(fd, handle);

@@ -11,6 +11,7 @@ import (
 
 	"tractor.dev/toolkit-go/engine/cli"
 	"tractor.dev/wanix/fs"
+	"tractor.dev/wanix/fs/memfs"
 	"tractor.dev/wanix/fs/fskit"
 	"tractor.dev/wanix/fs/vfs"
 	"tractor.dev/wanix/misc"
@@ -52,6 +53,7 @@ type Task struct {
 	exit   string
 	dir    string
 	fds    map[int]*openFile
+	w      fs.FS
 	fdIdx  int
 	closer func()
 	fsys   *TaskFS
@@ -238,6 +240,7 @@ func (r *Task) Open(name string) (fs.File, error) {
 
 func (r *Task) taskMap() fskit.MapFS {
 	m := fskit.MapFS{
+		"w":   r.w,
 		"ctl": misc.ControlFile(&cli.Command{
 			Usage: "ctl",
 			Short: "control the Task",
@@ -402,6 +405,7 @@ func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
 
 	p := &Task{
 		fsys:   d,
+		w:      memfs.New(),
 		driver: driver,
 		id:     d.nextID,
 		kind:   kind,
