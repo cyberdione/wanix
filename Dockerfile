@@ -1,9 +1,7 @@
 ARG GO_VERSION=1.26.0
-ARG TINYGO_VERSION=0.41.1
+ARG TINYGO_VERSION=0.43.0
 ARG ALPINE_VERSION=3.22
 
-ARG BUILDPLATFORM
-ARG TARGETPLATFORM
 ARG LINUX_386=linux/386
 ARG LINUX_AMD64=linux/amd64
 ARG GOOS
@@ -27,6 +25,14 @@ WORKDIR /build
 
 FROM tinygo-buildbase AS wasm-tinygo
 RUN make wasm-tinygo
+
+# rc shell
+FROM go-buildbase AS rc
+WORKDIR /build/rc
+COPY rc/go.mod rc/go.sum ./
+RUN go mod download
+COPY rc .
+RUN GOWORK=off GOOS=js GOARCH=wasm go build -o ./rc.wasm ./cmd/rc
 
 FROM go-buildbase AS build
 RUN apk add --no-cache \
@@ -90,4 +96,5 @@ WORKDIR /dist
 COPY --from=build /build/dist/* .
 COPY --from=build /build/.local/bin/wanix ./wanix
 COPY --from=wasm-tinygo /build/dist/wanix.wasm ./wanix.wasm
+COPY --from=rc /build/rc/rc.wasm ./rc.wasm
 CMD ["true"]

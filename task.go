@@ -40,24 +40,27 @@ type TaskDriver interface {
 }
 
 type Task struct {
-	driver TaskDriver
-	parent *Task
-	ns     *vfs.NS
-	id     int
-	alias  string
-	kind   string
-	cmd    string
-	args   []string
-	env    []string
-	exit   string
-	dir    string
-	fds    map[int]*openFile
-	fdIdx  int
-	closer func()
-	fsys   *TaskFS
-	worker any
-	export fs.FS
-	mu     sync.Mutex
+	driver    TaskDriver
+	parent    *Task
+	ns        *vfs.NS
+	id        int
+	alias     string
+	kind      string
+	cmd       string
+	args      []string
+	env       []string
+	exit      string
+	dir       string
+	fds       map[int]*openFile
+	closedFDs map[int]bool
+	fdIdx     int
+	cleanup   []func()
+	exited    bool
+	cancel    context.CancelFunc
+	fsys      *TaskFS
+	worker    any
+	export    fs.FS
+	mu        sync.Mutex
 }
 
 func Export(t *Task, export fs.FS) {
@@ -117,7 +120,52 @@ func (t *Task) Register(kind string, driver TaskDriver) {
 	t.fsys.types[kind] = driver
 }
 
+// AddCleanup registers resources owned by this task. Late registrations close immediately.
+func (t *Task) AddCleanup(close func()) {
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		close()
+		return
+	}
+	t.cleanup = append(t.cleanup, close)
+	t.mu.Unlock()
+}
+
+// Exit cancels execution and releases owned resources exactly once.
+func (t *Task) Exit(status string) {
+	t.mu.Lock()
+	if t.exited {
+		t.mu.Unlock()
+		return
+	}
+	t.exited = true
+	t.exit = status
+	cleanup := t.cleanup
+	t.cleanup = nil
+	files := t.fds
+	t.fds = make(map[int]*openFile)
+	cancel := t.cancel
+	t.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	for _, close := range cleanup {
+		close()
+	}
+	closed := make(map[fs.File]bool)
+	for _, file := range files {
+		if !closed[file.file] {
+			closed[file.file] = true
+			_ = file.file.Close()
+		}
+	}
+}
+
 func (t *Task) Start() error {
+	if t.Context().Err() != nil {
+		return fs.ErrClosed
+	}
 	if t.driver != nil {
 		return t.driver.Start(t)
 	}
@@ -189,6 +237,11 @@ func (r *Task) Unbind(srcPath, dstPath string) error {
 
 func (r *Task) OpenFD(file fs.File, path string) int {
 	r.mu.Lock()
+	if r.exited {
+		r.mu.Unlock()
+		_ = file.Close()
+		return -1
+	}
 	defer r.mu.Unlock()
 	r.fdIdx++
 	r.fds[r.fdIdx] = &openFile{file: file, path: path}
@@ -197,33 +250,42 @@ func (r *Task) OpenFD(file fs.File, path string) int {
 
 func (r *Task) CloseFD(fd int) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if fd < 0 || fd > r.fdIdx {
-		return fs.ErrInvalid
-	}
 	f, ok := r.fds[fd]
 	if !ok {
+		r.mu.Unlock()
 		return fs.ErrInvalid
 	}
 	delete(r.fds, fd)
+	if fd >= 0 && fd < 3 {
+		r.closedFDs[fd] = true
+	}
+	r.mu.Unlock()
 	return f.file.Close()
 }
 
 func (r *Task) FD(fd int) (fs.File, string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.exited {
+		return nil, "", fs.ErrClosed
+	}
 	if fd < 0 || fd > r.fdIdx {
 		return nil, "", fs.ErrInvalid
 	}
 	if fd < 3 {
-		name := fmt.Sprintf("#task/%s/fd/%d", r.ID(), fd)
-		// this should probably use #task/self but i think there are some
-		// issues to work out for that to work correctly here.
-		stdfile, err := r.NS().Open(name)
-		if err != nil {
-			return nil, "", err
+		if r.closedFDs[fd] {
+			return nil, "", fs.ErrInvalid
 		}
-		r.fds[fd] = &openFile{file: stdfile, path: name}
+		if _, ok := r.fds[fd]; !ok {
+			name := fmt.Sprintf("#task/%s/fd/%d", r.ID(), fd)
+			// Resolve once, after namespace setup, then retain the exact file
+			// until it is explicitly closed or the task exits.
+			stdfile, err := r.NS().Open(name)
+			if err != nil {
+				return nil, "", err
+			}
+			r.fds[fd] = &openFile{file: stdfile, path: name}
+		}
 	}
 	f, ok := r.fds[fd]
 	if !ok {
@@ -267,6 +329,10 @@ func (r *Task) taskMap() fskit.MapFS {
 					if err := r.Unbind(args[1], args[2]); err != nil {
 						log.Println(err)
 					}
+					return
+				}
+				if len(args) == 1 && args[0] == "stop" {
+					go r.Exit("130")
 					return
 				}
 				if len(args) == 1 && args[0] == "start" {
@@ -318,10 +384,8 @@ func (r *Task) taskMap() fskit.MapFS {
 		}),
 		"exit": misc.FieldFile(r.exit, func(in []byte) error {
 			if len(in) > 0 {
-				r.exit = strings.TrimSpace(string(in))
-				if r.closer != nil {
-					go r.closer()
-				}
+				status := strings.TrimSpace(string(in))
+				go r.Exit(status)
 			}
 			return nil
 		}),
@@ -401,14 +465,16 @@ func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
 	rid := strconv.Itoa(d.nextID)
 
 	p := &Task{
-		fsys:   d,
-		driver: driver,
-		id:     d.nextID,
-		kind:   kind,
-		fds:    make(map[int]*openFile),
-		fdIdx:  3,
+		fsys:      d,
+		driver:    driver,
+		id:        d.nextID,
+		kind:      kind,
+		fds:       make(map[int]*openFile),
+		closedFDs: make(map[int]bool),
+		fdIdx:     3,
 	}
-	ctx := context.WithValue(context.Background(), TaskContextKey, p)
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), TaskContextKey, p))
+	p.cancel = cancel
 	if parent != nil {
 		p.parent = parent
 		p.ns = parent.ns.Clone(ctx)

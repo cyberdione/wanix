@@ -2308,12 +2308,9 @@ var CallBuffer = class {
     this.maxData = this.buffer.byteLength - 8 - 16;
   }
   respond(value) {
-    let buf;
-    if (value instanceof Uint8Array) {
-      const limit = Math.min(value.length, this.maxData);
-      buf = encode(value.slice(0, limit));
-    } else {
-      buf = encode(value);
+    const buf = encode(value);
+    if (buf.length > this.data.length) {
+      throw new Error(`response (${buf.length} bytes) exceeds CallBuffer (${this.data.length} bytes)`);
     }
     this.len[0] = buf.length;
     this.data.set(buf, 0);
@@ -2325,7 +2322,11 @@ var CallBuffer = class {
     params["method"] = method;
     postMessage(params);
     Atomics.wait(this.ctrl, 0, 0);
-    return decode(this.data.slice(0, this.len[0]));
+    const value = decode(this.data.slice(0, this.len[0]));
+    if (value && value.__wanix_error) {
+      throw new Error(value.__wanix_error);
+    }
+    return value;
   }
 };
 
@@ -3733,7 +3734,7 @@ var OpenFile2 = class extends Fd {
   }
   fd_fdstat_get() {
     const size = this.file.handle.getSize();
-    const fdstat = new wasi_defs_exports.Fdstat(size > 0 ? wasi_defs_exports.FILETYPE_REGULAR_FILE : wasi_defs_exports.FILETYPE_CHARACTER_DEVICE, 0);
+    const fdstat = new wasi_defs_exports.Fdstat(wasi_defs_exports.FILETYPE_REGULAR_FILE, 0);
     if (!this.file.readonly) {
       fdstat.fs_rights_base = BigInt(wasi_defs_exports.RIGHTS_FD_WRITE);
     }
@@ -3745,7 +3746,7 @@ var OpenFile2 = class extends Fd {
       ret: 0,
       filestat: new wasi_defs_exports.Filestat(
         this.ino,
-        size > 0 ? wasi_defs_exports.FILETYPE_REGULAR_FILE : wasi_defs_exports.FILETYPE_CHARACTER_DEVICE,
+        wasi_defs_exports.FILETYPE_REGULAR_FILE,
         BigInt(size)
       )
     };
@@ -3790,6 +3791,10 @@ var OpenFile2 = class extends Fd {
   }
   fd_sync() {
     this.file.handle.flush();
+    return wasi_defs_exports.ERRNO_SUCCESS;
+  }
+  fd_close() {
+    this.file.handle.close();
     return wasi_defs_exports.ERRNO_SUCCESS;
   }
 };
@@ -4272,7 +4277,7 @@ var FileHandle = class extends WanixHandle {
   }
   read(buffer, options) {
     let at = 0;
-    if (options?.at) {
+    if (options?.at !== void 0) {
       at = options.at;
     }
     const count = buffer.byteLength;
@@ -4293,7 +4298,7 @@ var FileHandle = class extends WanixHandle {
   }
   write(buffer, options) {
     let at = 0;
-    if (options?.at) {
+    if (options?.at !== void 0) {
       at = options.at;
     }
     const data = new Uint8Array(buffer);
@@ -4319,9 +4324,7 @@ var DirectoryHandle = class _DirectoryHandle extends WanixHandle {
     }
   }
   readDir() {
-    if (performance.now() - this.lastReadDir < 1e3) {
-      return this.dirCache;
-    }
+    this.lastReadDir = performance.now();
     this.lastReadDir = performance.now();
     const m = /* @__PURE__ */ new Map();
     const entries = this.caller.call("path_readdir", { path: this.path }) || [];
@@ -4338,16 +4341,22 @@ var DirectoryHandle = class _DirectoryHandle extends WanixHandle {
     return m;
   }
   removeEntry(name) {
-    return this.caller.call("path_remove", { path: this.subpath(name) });
+    const result = this.caller.call("path_remove", { path: this.subpath(name) });
+    this.lastReadDir = -Infinity;
+    return result;
   }
   createLink(name, entry) {
     return false;
   }
   createFile(name, entry) {
-    return this.caller.call("path_touch", { path: this.subpath(name) });
+    const result = this.caller.call("path_touch", { path: this.subpath(name) });
+    this.lastReadDir = -Infinity;
+    return result;
   }
   createDirectory(name, entry) {
-    return this.caller.call("path_mkdir", { path: this.subpath(name) });
+    const result = this.caller.call("path_mkdir", { path: this.subpath(name) });
+    this.lastReadDir = -Infinity;
+    return result;
   }
 };
 
@@ -8538,22 +8547,49 @@ var WanixHandle2 = class {
   }
   writable(fd) {
     const self = this;
+    let closed = false;
+    let closing;
+    const closeFD = () => {
+      if (!closing) {
+        closed = true;
+        closing = Promise.resolve().then(() => self.close(fd));
+      }
+      return closing;
+    };
     return new WritableStream({
       write(chunk) {
+        if (closed) {
+          throw new TypeError("write to closed Wanix stream");
+        }
         return self.write(fd, chunk);
-      }
+      },
+      close: closeFD,
+      abort: closeFD
     });
   }
   readable(fd) {
     const self = this;
+    let closed = false;
+    let closing;
+    const closeFD = () => {
+      if (!closing) {
+        closed = true;
+        closing = Promise.resolve().then(() => self.close(fd));
+      }
+      return closing;
+    };
     return new ReadableStream({
       async pull(controller) {
         const data = await self.read(fd, 1024);
+        if (closed) return;
         if (data === null) {
+          await closeFD();
           controller.close();
+          return;
         }
         controller.enqueue(data);
-      }
+      },
+      cancel: closeFD
     });
   }
 };

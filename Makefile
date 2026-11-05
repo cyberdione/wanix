@@ -16,10 +16,11 @@ GOARCH			?= $(shell go env GOARCH)
 WASM_DEBUG 		?= true
 LINK_BIN 		?= /usr/local/bin
 DIST_DIR		?= dist
+DIST_IMAGE		?= wanix-artifacts:dev
 DIST_OS			?= darwin windows linux
 DIST_ARCH		?= arm64 amd64
 
-EXAMPLE_DEPS 	:= dist/wanix.debug.wasm dist/wanix.min.js workbench/code extras/dist/wanix-linux.tgz test/gojs/gojscheck.wasm
+EXAMPLE_DEPS 	:= dist/wanix.debug.wasm dist/wanix.min.js workbench/code extras/dist/wanix-linux.tgz v86/v86.tgz test/gojs/gojscheck.wasm
 
 export DOCKER_CMD 	?= $(shell command -v docker)
 
@@ -62,6 +63,12 @@ build-docker:
 	ls -lah .local/bin/wanix
 .PHONY: build-docker
 
+## Build the Wanix artifacts image (for downstream Docker builds)
+docker/dist:
+	$(DOCKER_CMD) build \
+		--target dist -t $(DIST_IMAGE) -f Dockerfile .
+.PHONY: docker/dist
+
 ## Build Wanix command
 cmd:
 	GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o .local/bin/wanix $(GOARGS) ./cmd/wanix
@@ -73,7 +80,7 @@ wasm: $(if $(WASM_DEBUG),wasm-go,) wasm-tinygo
 .PHONY: wasm
 
 ## Build WASM module using TinyGo
-wasm-tinygo: wasi/worker/lib.js
+wasm-tinygo: js wasi/worker/lib.js
 	@if ! command -v tinygo >/dev/null 2>&1; then \
 		echo "skipping wasm-tinygo build: tinygo not installed"; \
 		exit 0; \
@@ -144,7 +151,10 @@ workbench/code:
 	make -C workbench
 
 extras/dist/wanix-linux.tgz:
-	make -C extras
+	make -C extras dist/wanix-linux.tgz
+
+v86/v86.tgz:
+	make -C v86
 
 
 ## Build distribution binaries

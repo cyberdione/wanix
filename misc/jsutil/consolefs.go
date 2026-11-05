@@ -5,6 +5,7 @@ package jsutil
 import (
 	"bytes"
 	"context"
+	"io"
 	iofs "io/fs"
 	"os"
 	"sync"
@@ -24,9 +25,10 @@ type consoleFS struct {
 }
 
 var (
-	_ fs.RouteFS     = (*consoleFS)(nil)
+	_ fs.RouteFS       = (*consoleFS)(nil)
 	_ fs.OpenFileFS    = (*consoleFS)(nil)
 	_ fs.OpenContextFS = (*consoleFS)(nil)
+	_ io.WriterAt      = (*consoleHandle)(nil)
 )
 
 func (c *consoleFS) Route(ctx context.Context, name string) (fs.FS, string, error) {
@@ -64,6 +66,12 @@ func (h *consoleHandle) Read(p []byte) (int, error) {
 
 func (h *consoleHandle) Write(b []byte) (int, error) {
 	return h.c.w.Write(b)
+}
+
+// WriteAt appends to the console stream. The offset supplied by stream
+// callers (such as WASI fd_write) is bookkeeping, not a seek position.
+func (h *consoleHandle) WriteAt(b []byte, _ int64) (int, error) {
+	return h.Write(b)
 }
 
 func (h *consoleHandle) Close() error {

@@ -101,7 +101,7 @@ export class OpenFile extends Fd {
 
   fd_fdstat_get(): { ret: number; fdstat: wasi.Fdstat | null } {
     const size = this.file.handle.getSize();
-    const fdstat = new wasi.Fdstat((size > 0) ? wasi.FILETYPE_REGULAR_FILE : wasi.FILETYPE_CHARACTER_DEVICE, 0);
+    const fdstat = new wasi.Fdstat(wasi.FILETYPE_REGULAR_FILE, 0);
     if (!this.file.readonly) {
       fdstat.fs_rights_base = BigInt(wasi.RIGHTS_FD_WRITE);
     }
@@ -114,7 +114,7 @@ export class OpenFile extends Fd {
       ret: 0,
       filestat: new wasi.Filestat(
         this.ino,
-        (size > 0) ? wasi.FILETYPE_REGULAR_FILE : wasi.FILETYPE_CHARACTER_DEVICE,
+        wasi.FILETYPE_REGULAR_FILE,
         BigInt(size),
       ),
     };
@@ -169,6 +169,11 @@ export class OpenFile extends Fd {
 
   fd_sync(): number {
     this.file.handle.flush();
+    return wasi.ERRNO_SUCCESS;
+  }
+
+  fd_close(): number {
+    this.file.handle.close();
     return wasi.ERRNO_SUCCESS;
   }
 }
@@ -607,7 +612,7 @@ export class OpenDirectory extends Fd {
             this.contents.set(name, entry);
         }
     }
-  
+
     parent_ino(): bigint {
       if (this.parent == null) {
         return Inode.root_ino();

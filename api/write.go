@@ -1,8 +1,7 @@
 package api
 
 import (
-	"log"
-
+	"fmt"
 	"tractor.dev/toolkit-go/duplex/rpc"
 	"tractor.dev/wanix/fs"
 )
@@ -13,7 +12,7 @@ func (s *syscaller) write(r rpc.Responder, c *rpc.Call) {
 
 	fd, ok := args[0].(uint64)
 	if !ok {
-		log.Panicf("arg 0 is not a uint64: %T %v", args[1], args[1])
+		panic(fmt.Sprintf("arg 0 is not a uint64: %T %v", args[1], args[1]))
 	}
 
 	f, _, err := s.task.FD(int(fd))
@@ -42,7 +41,7 @@ func (s *syscaller) writeAt(r rpc.Responder, c *rpc.Call) {
 
 	fd, ok := args[0].(uint64)
 	if !ok {
-		log.Panicf("arg 0 is not a uint64: %T %v", args[1], args[1])
+		panic(fmt.Sprintf("arg 0 is not a uint64: %T %v", args[1], args[1]))
 	}
 
 	f, _, err := s.task.FD(int(fd))

@@ -1,8 +1,9 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"io"
-	"log"
 
 	"tractor.dev/toolkit-go/duplex/rpc"
 )
@@ -13,7 +14,7 @@ func (s *syscaller) read(r rpc.Responder, c *rpc.Call) {
 
 	fd, ok := args[0].(uint64)
 	if !ok {
-		log.Panicf("arg 0 is not a uint64: %T %v", args[1], args[1])
+		panic(fmt.Sprintf("arg 0 is not a uint64: %T %v", args[1], args[1]))
 	}
 
 	f, _, err := s.task.FD(int(fd))
@@ -28,12 +29,19 @@ func (s *syscaller) read(r rpc.Responder, c *rpc.Call) {
 	}
 
 	buf := make([]byte, count)
-	n, err := f.Read(buf)
-	if err == io.EOF {
+	var n int
+	if reader, ok := f.(interface {
+		ReadContext(context.Context, []byte) (int, error)
+	}); ok {
+		n, err = reader.ReadContext(s.task.Context(), buf)
+	} else {
+		n, err = f.Read(buf)
+	}
+	if err == io.EOF && n == 0 {
 		r.Return(nil)
 		return
 	}
-	if err != nil {
+	if err != nil && err != io.EOF {
 		r.Return(err)
 		return
 	}

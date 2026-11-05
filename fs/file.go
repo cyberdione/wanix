@@ -37,15 +37,21 @@ func WriteAt(f File, data []byte, off int64) (n int, err error) {
 		return 0, ErrPermission
 	}
 
-	// For offset 0, we can write directly
+	// For offset 0, we can write directly.
 	if off == 0 {
 		return Write(f, data)
 	}
 
-	// Seek to the desired position
-	_, err = Seek(f, off, 0) // SEEK_SET = 0
-	if err != nil {
-		return 0, fmt.Errorf("seek to offset %d: %w", off, err)
+	// Seek to the desired position when the file supports positional writes.
+	// A non-seekable writer (for example, stdout/stderr) has no position to
+	// adjust, so write sequentially instead. This is also how stream-oriented
+	// callers such as WASI fd_write use the offset: as bookkeeping for the
+	// stream position rather than a seek request.
+	if _, ok := f.(io.Seeker); ok {
+		_, err = Seek(f, off, 0) // SEEK_SET = 0
+		if err != nil {
+			return 0, fmt.Errorf("seek to offset %d: %w", off, err)
+		}
 	}
 
 	return Write(f, data)

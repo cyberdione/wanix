@@ -23,11 +23,14 @@ import (
 )
 
 type Resource struct {
-	id     int
-	state  string
-	src    string
-	worker js.Value
-	task   *wanix.Task
+	id          int
+	state       string
+	src         string
+	worker      js.Value
+	task        *wanix.Task
+	callbacks   []js.Func
+	exportPorts []js.Value
+	stopped     bool
 }
 
 type guestSetter interface {
@@ -39,7 +42,43 @@ func (r *Resource) ID() string {
 	return strconv.Itoa(r.id)
 }
 
+func (r *Resource) callback(fn func(js.Value, []js.Value) any) js.Func {
+	cb := js.FuncOf(fn)
+	if r.stopped {
+		cb.Release()
+		return cb
+	}
+	r.callbacks = append(r.callbacks, cb)
+	return cb
+}
+
+func (r *Resource) stop() {
+	if r.stopped {
+		return
+	}
+	r.stopped = true
+	if r.worker.Truthy() {
+		r.worker.Set("onerror", js.Null())
+		r.worker.Set("onmessageerror", js.Null())
+		r.worker.Call("terminate")
+	}
+	for _, port := range r.exportPorts {
+		port.Set("onmessage", js.Null())
+		port.Call("close")
+	}
+	r.exportPorts = nil
+	for _, cb := range r.callbacks {
+		cb.Release()
+	}
+	r.callbacks = nil
+	wanix.SetWorker(r.task, nil)
+	r.state = "terminated"
+}
+
 func (r *Resource) Start(args ...string) error {
+	if r.stopped || r.state == "running" {
+		return fs.ErrClosed
+	}
 	env := make(map[string]any)
 
 	// Parse environment variables from args
@@ -67,13 +106,13 @@ func (r *Resource) Start(args ...string) error {
 	}
 
 	r.worker = js.Global().Get("Worker").New(url, js.ValueOf(map[string]any{"type": "module"}))
-	r.worker.Set("onerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	r.worker.Set("onerror", r.callback(func(this js.Value, args []js.Value) any {
 		js.Global().Get("console").Call("error", args[0])
 		// load the script again in a way that will show an import/syntax error
 		jsutil.LoadScript(url.String(), true)
 		return nil
 	}))
-	r.worker.Set("onmessageerror", js.FuncOf(func(this js.Value, args []js.Value) any {
+	r.worker.Set("onmessageerror", r.callback(func(this js.Value, args []js.Value) any {
 		js.Global().Get("console").Call("error", args[0])
 		return nil
 	}))
@@ -83,14 +122,19 @@ func (r *Resource) Start(args ...string) error {
 	port := sys.Element().Call("_openPort", r.task.ID())
 	p9 := sys.Element().Call("_open9P", r.task.ID())
 
-	r.worker.Call("addEventListener", "message", js.FuncOf(func(this js.Value, args []js.Value) any {
+	r.worker.Call("addEventListener", "message", r.callback(func(this js.Value, args []js.Value) any {
 		go func() {
 			// all we handle are ns exports for now
 			exportPort := args[0].Get("data").Get("export")
 			if exportPort.IsUndefined() {
 				return
 			}
-			exportPort.Set("onmessage", js.FuncOf(func(this js.Value, _ []js.Value) any {
+			if r.stopped {
+				exportPort.Call("close")
+				return
+			}
+			r.exportPorts = append(r.exportPorts, exportPort)
+			exportPort.Set("onmessage", r.callback(func(this js.Value, _ []js.Value) any {
 				go func() {
 					// use initial signal message to mount export
 					conn := misc.NewFakeConn(jsutil.NewPortReadWriter(exportPort))
@@ -141,6 +185,7 @@ func (r *Resource) Start(args ...string) error {
 	}}, []any{port, p9})
 
 	r.state = "running"
+	r.task.AddCleanup(r.stop)
 	return nil
 }
 
@@ -162,10 +207,7 @@ func (r *Resource) rootFS() fskit.MapFS {
 				case "start":
 					r.Start(args[1:]...)
 				case "terminate":
-					if !r.worker.IsUndefined() {
-						r.worker.Call("terminate")
-					}
-					r.state = "terminated"
+					go r.task.Exit("130")
 				}
 			},
 		}),
