@@ -41,6 +41,39 @@ func (q *QueueFS) finishClose() {
 	})
 }
 
+func (q *QueueFS) StatContext(_ context.Context, name string) (fs.FileInfo, error) {
+	switch name {
+	case ".":
+		return fskit.Entry(".", fs.ModeDir|0555), nil
+	case "read":
+		q.mu.Lock()
+		closed := q.closed
+		q.mu.Unlock()
+		if closed {
+			return nil, fs.ErrNotExist
+		}
+		return fskit.Entry("read", 0444), nil
+	case "write":
+		q.mu.Lock()
+		closed := q.closed
+		q.mu.Unlock()
+		if closed {
+			return nil, fs.ErrNotExist
+		}
+		return fskit.Entry("write", 0222), nil
+	case "ctl":
+		q.mu.Lock()
+		closed := q.closed
+		q.mu.Unlock()
+		if closed {
+			return nil, fs.ErrNotExist
+		}
+		return fskit.Entry("ctl", 0222), nil
+	default:
+		return nil, fs.ErrNotExist
+	}
+}
+
 func (q *QueueFS) Open(name string) (fs.File, error) {
 	return q.OpenContext(context.Background(), name)
 }
@@ -177,7 +210,41 @@ type QueueAllocator struct {
 func (a *QueueAllocator) Open(name string) (fs.File, error) {
 	return a.OpenContext(context.Background(), name)
 }
+
+func (a *QueueAllocator) Route(_ context.Context, name string) (fs.FS, string, error) {
+	id, rest, ok := strings.Cut(name, "/")
+	if !ok {
+		id, rest = name, "."
+	}
+	a.mu.Lock()
+	q := a.queues[id]
+	a.mu.Unlock()
+	if q == nil {
+		return a, name, nil
+	}
+	return q, rest, nil
+}
+
+// BindAllocFS exposes the allocator root or an allocated queue directory.
+func (a *QueueAllocator) BindAllocFS(name string) (fs.FS, error) {
+	if name == "." {
+		return a, nil
+	}
+	if _, rest, ok := strings.Cut(name, "/"); ok {
+		name = rest
+	}
+	a.mu.Lock()
+	q := a.queues[name]
+	a.mu.Unlock()
+	if q == nil {
+		return nil, fs.ErrNotExist
+	}
+	return q, nil
+}
 func (a *QueueAllocator) OpenContext(ctx context.Context, name string) (fs.File, error) {
+	if name == "." {
+		return fskit.DirFile(fskit.Entry(".", fs.ModeDir|0555), fskit.Entry("new", 0444)), nil
+	}
 	if name == "new" {
 		if a.MaxBytes <= 0 {
 			return nil, fs.ErrInvalid

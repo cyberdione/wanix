@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 	"tractor.dev/wanix/fs"
+	"tractor.dev/wanix/fs/vfs"
 )
 
 func TestQueueBlocksThenDeliversAndRejectsOverflow(t *testing.T) {
@@ -124,6 +126,70 @@ func TestQueueFSReadWriteAndSingleReader(t *testing.T) {
 	_ = rf.Close()
 	if _, err = q.OpenContext(context.Background(), "read"); err != fs.ErrNotExist {
 		t.Fatalf("reader close did not close endpoint: %v", err)
+	}
+}
+
+func TestQueueAllocatorRootBindingAndNew(t *testing.T) {
+	a := &QueueAllocator{MaxBytes: 128}
+	ns := vfs.New(context.Background())
+	if err := ns.Bind(a, ".", "#wminput"); err != nil {
+		t.Fatalf("Bind allocator at root: %v", err)
+	}
+	f, err := ns.Open("#wminput/new")
+	if err != nil {
+		t.Fatalf("open new: %v", err)
+	}
+	b := make([]byte, 64)
+	n, err := f.Read(b)
+	if err != nil {
+		t.Fatalf("read new: %v", err)
+	}
+	id := strings.TrimSpace(string(b[:n]))
+	if id == "" {
+		t.Fatal("allocator returned empty ID")
+	}
+	if _, err := a.Open(id + "/write"); err != nil {
+		t.Fatalf("open allocated queue: %v", err)
+	}
+	if err := ns.Bind(ns, "#wminput/"+id, "allocated-queue"); err != nil {
+		t.Fatalf("bind allocated queue directory: %v", err)
+	}
+	if _, err := ns.Open("allocated-queue/write"); err != nil {
+		t.Fatalf("open bound queue writer: %v", err)
+	}
+	// Bind the allocated directory into a cloned task namespace as the host does.
+	taskNS := ns.Clone(context.Background())
+	if err := taskNS.Bind(ns, "#wminput/"+id, "wm/input"); err != nil {
+		t.Fatalf("bind task queue directory: %v", err)
+	}
+	dirEntries, err := fs.ReadDir(taskNS, "wm/input")
+	if err != nil || len(dirEntries) != 3 {
+		t.Fatalf("queue dir entries = %v, %v", dirEntries, err)
+	}
+	reader, err := taskNS.Open("wm/input/read")
+	if err != nil {
+		t.Fatalf("open queue reader: %v", err)
+	}
+	writer, err := ns.Open("#wminput/" + id + "/write")
+	if err != nil {
+		t.Fatalf("open host writer: %v", err)
+	}
+	payload := []byte("{\"type\":\"toggle\"}\n")
+	wf, ok := writer.(interface{ Write([]byte) (int, error) })
+	if !ok {
+		t.Fatalf("host writer %T is not writable", writer)
+	}
+	if n, err := wf.Write(payload); err != nil || n != len(payload) {
+		t.Fatalf("write event = %d, %v", n, err)
+	}
+	got := make([]byte, len(payload))
+	if n, err := reader.Read(got); err != nil || string(got[:n]) != string(payload) {
+		t.Fatalf("read event = %q, %v", got[:n], err)
+	}
+	_ = reader.Close()
+	_ = writer.Close()
+	if _, err := a.Open(id + "/write"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("reader close did not reclaim queue: %v", err)
 	}
 }
 
