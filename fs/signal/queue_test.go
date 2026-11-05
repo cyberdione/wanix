@@ -3,8 +3,10 @@ package signal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"tractor.dev/wanix/fs"
@@ -41,6 +43,61 @@ func TestQueueBlocksThenDeliversAndRejectsOverflow(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("read remained blocked")
+	}
+}
+
+func TestQueueConcurrentWritesPreserveWholeFramesAndFIFO(t *testing.T) {
+	const writers, frames = 4, 32
+	q := NewQueue(4096)
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(writer int) {
+			defer wg.Done()
+			for frame := 0; frame < frames; frame++ {
+				payload := []byte(fmt.Sprintf("w=%d f=%d\n", writer, frame))
+				if _, err := q.Write(payload); err != nil {
+					t.Errorf("write: %v", err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	_ = q.Close()
+	data := make([]byte, 0, writers*frames*16)
+	buf := make([]byte, 64)
+	for {
+		n, err := q.Read(buf)
+		data = append(data, buf[:n]...)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := make(map[string]bool, writers*frames)
+	lastFrame := make(map[int]int, writers)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line == "" {
+			continue
+		}
+		var writer, frame int
+		if _, err := fmt.Sscanf(line, "w=%d f=%d", &writer, &frame); err != nil {
+			t.Fatalf("malformed/torn frame %q: %v", line, err)
+		}
+		if seen[line] {
+			t.Fatalf("duplicate frame %q", line)
+		}
+		if expected := lastFrame[writer]; frame != expected {
+			t.Fatalf("writer %d frame order: got %d want %d", writer, frame, expected)
+		}
+		lastFrame[writer] = frame + 1
+		seen[line] = true
+	}
+	if len(seen) != writers*frames {
+		t.Fatalf("read %d complete frames, want %d", len(seen), writers*frames)
 	}
 }
 
