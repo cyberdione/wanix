@@ -330,6 +330,47 @@ func TestQueueFSReaderCloseDoesNotAllowReplacementReader(t *testing.T) {
 	}
 }
 
+func TestQueueTaskNamespaceCancellationWakesReadAndReclaims(t *testing.T) {
+	a := &QueueAllocator{MaxBytes: 8, MaxQueues: 1}
+	ns := vfs.New(context.Background())
+	if err := ns.Bind(a, ".", "#wminput"); err != nil {
+		t.Fatal(err)
+	}
+	nf, err := ns.Open("#wminput/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 40)
+	n, err := nf.Read(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimSpace(string(b[:n]))
+	taskCtx, cancel := context.WithCancel(context.Background())
+	taskNS := ns.Clone(taskCtx)
+	if err := taskNS.Bind(ns, "#wminput/"+id, "wm/input"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := taskNS.Open("wm/input/read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, e := r.Read(make([]byte, 1)); done <- e }()
+	cancel()
+	select {
+	case e := <-done:
+		if !errors.Is(e, context.Canceled) {
+			t.Fatalf("read = %v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("task cancel failed to wake namespace read")
+	}
+	if _, err := a.Open(id + "/write"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("queue not reclaimed: %v", err)
+	}
+}
+
 func TestQueueAllocatorOpenContextRoutesTaskCancellation(t *testing.T) {
 	a := &QueueAllocator{MaxBytes: 8, MaxQueues: 1}
 	nf, err := a.Open("new")
