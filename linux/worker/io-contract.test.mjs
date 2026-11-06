@@ -100,3 +100,32 @@ test('async backend errors cross actual response codec as typed I/O errors', asy
     try { assert.deepEqual(call.call('fd_read', {}), {ioError:9}); }
     finally { globalThis.postMessage = post; }
 });
+
+test('readv keeps completed bytes and cursor when a later response is malformed (real codec)', async () => {
+    const reads = [];
+    await fixture((method, args) => {
+        if (method === 'path_open') return 10;
+        if (method === 'path_open_existing') return {ok: true, fd: 11};
+        if (method === 'fd_read') {
+            reads.push(args.at);
+            return reads.length === 2 ? {} : Uint8Array.of(41, 42);
+        }
+        if (method === 'exit') return true;
+        assert.fail(method);
+    }, (syscall, bytes) => {
+        bytes.set(new TextEncoder().encode('out.txt\0'), 32);
+        const fd = syscall(56, -100, 32, 0, 0);
+        assert.equal(fd, 3);
+        const view = new DataView(bytes.buffer);
+        view.setUint32(128, 256, true); view.setUint32(132, 2, true);
+        view.setUint32(136, 272, true); view.setUint32(140, 2, true);
+        bytes.fill(99, 255, 276);
+        assert.equal(syscall(65, fd, 128, 2), 2);
+        assert.deepEqual(bytes.slice(255, 260), Uint8Array.of(99, 41, 42, 99, 99));
+        assert.deepEqual(bytes.slice(271, 276), new Uint8Array(5).fill(99));
+        assert.deepEqual(reads, [0, 2]);
+        assert.equal(syscall(63, fd, 272, 2), 2);
+        assert.deepEqual(reads, [0, 2, 2]);
+        assert.deepEqual(bytes.slice(271, 276), Uint8Array.of(99, 41, 42, 99, 99));
+    }, true);
+});
