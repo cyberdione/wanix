@@ -3,10 +3,11 @@ package api
 import (
 	"syscall"
 	"tractor.dev/toolkit-go/duplex/rpc"
+	"tractor.dev/wanix/fs"
 )
 
-// openFileResult accepts semantic fields, never guest numeric flags. Creation is
-// deliberately unavailable until the personality has an explicit mask contract.
+// openFileResult accepts semantic fields and already-masked ordinary mode metadata,
+// never guest numeric flags or a second umask policy.
 func (s *syscaller) openFileResult(r rpc.Responder, c *rpc.Call) {
 	var req map[string]any
 	if err := c.Receive(&req); err != nil {
@@ -28,11 +29,7 @@ func (s *syscaller) openFileResult(r rpc.Responder, c *rpc.Call) {
 		fail(syscall.EINVAL)
 		return
 	}
-	if create || excl {
-		fail(syscall.ENOSYS)
-		return
-	}
-	fd, err := s.task.OpenScratchFD(name, access, trunc)
+	fd, err := s.task.OpenScratchCreateFD(name, access, trunc, create, excl, fs.FileMode(perm))
 	if err != nil {
 		_ = r.Return(failedFilesystemResult[uint64](err))
 		return

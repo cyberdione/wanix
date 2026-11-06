@@ -36,7 +36,7 @@ test('umask actual dispatch exchanges signed i32 bits and resets every parentles
             assert.deepEqual(bytes, before);
             assert.equal(s(166, 0o077), 0);
             bytes.set(new TextEncoder().encode('out.txt\0'), 128);
-            for (const flags of [64, 128, 1024, 64|128, 64|1, 64|2, 2|1024]) {
+            for (const flags of [128, 1024, 2|1024]) {
                 assert.equal(s(56, -100, 128, flags, 0o666), -38);
             }
         };

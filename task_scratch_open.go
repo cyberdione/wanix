@@ -15,21 +15,31 @@ import (
 // Exit does not revoke the returned caller-owned handle. Task-owned callers must
 // use OpenScratchFD, not a later OpenFD registration after a destructive open.
 func (t *Task) OpenScratchFile(name, access string, truncate bool) (fs.File, error) {
-	h, _, err := t.openScratchFile(name, access, truncate, false)
+	h, _, err := t.openScratchFile(name, access, truncate, false, false, 0, false)
 	return h, err
 }
 
 // OpenScratchFD admits the backend open and task-owned FD publication together.
 // An Exit after success may close the FD, but cannot retroactively reject the open.
 func (t *Task) OpenScratchFD(name, access string, truncate bool) (int, error) {
-	_, fd, err := t.openScratchFile(name, access, truncate, true)
+	_, fd, err := t.openScratchFile(name, access, truncate, false, false, 0, true)
 	if err != nil {
 		return -1, err
 	}
 	return fd, nil
 }
 
-func (t *Task) openScratchFile(name, access string, truncate, publish bool) (fs.File, int, error) {
+// OpenScratchCreateFD uses already-masked ordinary permission metadata. It does
+// not enforce Unix DAC. Creation and descriptor admission share the exit gate.
+func (t *Task) OpenScratchCreateFD(name, access string, truncate, create, exclusive bool, perm fs.FileMode) (int, error) {
+	_, fd, err := t.openScratchFile(name, access, truncate, create, exclusive, perm, true)
+	return fd, err
+}
+
+func (t *Task) openScratchFile(name, access string, truncate, create, exclusive bool, perm fs.FileMode, publish bool) (fs.File, int, error) {
+	if perm & ^fs.FileMode(0777) != 0 || !create && perm != 0 || exclusive && !create {
+		return nil, -1, syscall.EINVAL
+	}
 	flags := 0
 	switch access {
 	case "read":
@@ -47,6 +57,12 @@ func (t *Task) openScratchFile(name, access string, truncate, publish bool) (fs.
 	if truncate {
 		flags |= os.O_TRUNC
 	}
+	if create {
+		flags |= os.O_CREATE
+	}
+	if exclusive {
+		flags |= os.O_EXCL
+	}
 	prefix := "#task/" + t.ID() + "/w/"
 	if !strings.HasPrefix(name, prefix) {
 		return nil, -1, syscall.EACCES
@@ -58,8 +74,18 @@ func (t *Task) openScratchFile(name, access string, truncate, publish bool) (fs.
 	// Start fresh, retaining task identity but never an inherited read-only operation.
 	ctx := context.WithValue(context.Background(), TaskContextKey, t)
 	ctx = fs.WithOrigin(ctx, t.NS(), name, "atomic-open")
-	if access == "read" {
+	if access == "read" && !create {
 		ctx = fs.WithReadOnly(ctx)
+	}
+	// Parent visibility is an additional fail-closed policy, not a fallback
+	// authority source. These walks are separate routing snapshots; they do not
+	// promise atomic bind-table visibility or revocation on a concurrent swap.
+	parent, err := fs.Walk(ctx, t.NS(), strings.TrimSuffix(prefix, "/"))
+	if err != nil {
+		return nil, -1, syscall.ENOSYS
+	}
+	if parent.FS != t.w || parent.Rel != "." {
+		return nil, -1, syscall.EACCES
 	}
 	loc, err := fs.Walk(ctx, t.NS(), name)
 	if err != nil {
@@ -79,7 +105,7 @@ func (t *Task) openScratchFile(name, access string, truncate, publish bool) (fs.
 	if t.exited {
 		return nil, -1, fs.ErrClosed
 	}
-	h, err := owned.OpenFileGranted(leaf, flags, 0, true, true)
+	h, err := owned.OpenFileGranted(leaf, flags, perm, true, true)
 	if err != nil {
 		return nil, -1, err
 	}

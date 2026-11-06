@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -127,7 +128,7 @@ func TestExistingAtomicOpenSelectedRPC(t *testing.T) {
 	call(request("#task/self/w/out.txt", "read", false), "EACCES")
 	req := request(base+"out.txt", "readwrite", false)
 	req["Create"] = true
-	call(req, "ENOSYS")
+	call(req, "")
 	req = request(base+"out.txt", "read", false)
 	req["Append"] = true
 	call(req, "EINVAL")
@@ -149,6 +150,16 @@ func TestExistingAtomicOpenSelectedRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	call(request(base+"tmpfile_other", "readwrite", true), "EACCES")
+	blocked := request(base+"tmpfile_other", "write", true)
+	blocked["Create"] = true
+	blocked["Perm"] = uint64(0777)
+	call(blocked, "EACCES")
+	// Missing leaf overlay is denied too; never fall back to the owned parent.
+	if err := task.NS().Bind(task.NS(), base+"out.txt", base+"tmpfile_absent_overlay", fs.BindReplace); err != nil {
+		t.Fatal(err)
+	}
+	blocked["Path"] = base + "tmpfile_absent_overlay"
+	call(blocked, "EACCES")
 	otherID, err := fs.ReadFile(root.NS(), "#task/new/linux-scratch")
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +177,17 @@ func TestExistingAtomicOpenSelectedRPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	call(request(base+"out.txt", "readwrite", true), "EACCES")
+	// A missing leaf must not fall through a foreign parent overlay and create
+	// a hidden inode in owned scratch. Neither backend may be changed.
+	blocked["Path"] = base + "tmpfile_foreign_missing"
+	call(blocked, "EACCES")
+	if _, err := fs.Stat(root.NS(), foreign+"/tmpfile_foreign_missing"); err == nil {
+		t.Fatal("created foreign missing leaf")
+	}
+	// Root's namespace still addresses the unoverlaid owned backend.
+	if _, err := fs.Stat(root.NS(), base+"tmpfile_foreign_missing"); err == nil {
+		t.Fatal("created hidden owned leaf")
+	}
 	data, _ = fs.ReadFile(root.NS(), foreign+"/out.txt")
 	if string(data) != "foreign" {
 		t.Fatal("foreign backend mutated")
@@ -173,5 +195,131 @@ func TestExistingAtomicOpenSelectedRPC(t *testing.T) {
 	task.Exit("done")
 	if _, _, err := task.FD(int(*opened.Value)); err == nil {
 		t.Fatal("exit retained fd")
+	}
+}
+
+func TestAtomicCreateSelectedRPC(t *testing.T) {
+	root, err := wanix.NewRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Exit("done")
+	root.Register("linux", atomicTestDriver{})
+	selected, err := fs.ReadFile(root.NS(), "#task/new/linux-scratch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := root.Lookup(strings.TrimSpace(string(selected)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer task.Exit("done")
+	base := "#task/" + task.ID() + "/w/"
+	a, b := mux.Pair()
+	t.Cleanup(func() { a.Close(); b.Close() })
+	go Responder(a, task)
+	client := talk.NewPeer(b, codec.CBORCodec{})
+	call := func(leaf, access string, create, excl, trunc bool, perm uint64) filesystemResult[uint64] {
+		t.Helper()
+		var got filesystemResult[uint64]
+		_, e := client.Call(context.Background(), "OpenFileResult", map[string]any{"Path": base + leaf, "Access": access, "Create": create, "Exclusive": excl, "Truncate": trunc, "Perm": perm}, &got)
+		if e != nil {
+			t.Error(e)
+		}
+		return got
+	}
+	check := func(got filesystemResult[uint64], code string) {
+		t.Helper()
+		if code == "" {
+			if !got.OK || got.Value == nil {
+				t.Fatalf("success: %#v", got)
+			}
+		} else if got.OK || got.Error == nil || got.Error.Code != code {
+			t.Fatalf("want %s: %#v", code, got)
+		}
+	}
+	// Barrier-start requests use the actual RPC method and one unchanged absent leaf.
+	start := make(chan struct{})
+	results := make(chan filesystemResult[uint64], 2)
+	for i := 0; i < 2; i++ {
+		go func() { <-start; results <- call("tmpfile_race", "readwrite", true, true, false, 0640) }()
+	}
+	close(start)
+	wins, exists := 0, 0
+	for i := 0; i < 2; i++ {
+		got := <-results
+		if got.OK {
+			wins++
+		} else if got.Error != nil && got.Error.Code == "EEXIST" {
+			exists++
+		} else {
+			t.Fatalf("race: %#v", got)
+		}
+	}
+	if wins != 1 || exists != 1 {
+		t.Fatalf("wins=%d exists=%d", wins, exists)
+	}
+	info, err := fs.Stat(task.NS(), base+"tmpfile_race")
+	if err != nil || info.Mode().Perm() != 0640 {
+		t.Fatalf("mode: %v %v", info, err)
+	}
+	for _, mode := range []uint64{0, 0700, 0777} {
+		leaf := fmt.Sprintf("tmpfile_mode%d", mode)
+		got := call(leaf, "read", true, false, false, mode)
+		check(got, "")
+		h, _, e := task.FD(int(*got.Value))
+		if e != nil {
+			t.Fatal(e)
+		}
+		st, e := h.Stat()
+		if e != nil || uint64(st.Mode().Perm()) != mode {
+			t.Fatalf("mode %v %v", st, e)
+		}
+		if _, e = h.(io.WriterAt).WriteAt([]byte("no"), 0); e == nil {
+			t.Fatal("readonly create writable")
+		}
+	}
+	if e := fs.WriteFile(task.NS(), base+"out.txt", []byte("keep"), 0611); e != nil {
+		t.Fatal(e)
+	}
+	before, _ := fs.Stat(task.NS(), base+"out.txt")
+	check(call("out.txt", "readwrite", true, false, false, 0777), "")
+	after, _ := fs.Stat(task.NS(), base+"out.txt")
+	if before.Sys() != after.Sys() || before.Mode() != after.Mode() || !before.ModTime().Equal(after.ModTime()) || after.Size() != 4 {
+		t.Fatal("existing create changed inode")
+	}
+	check(call("out.txt", "write", true, true, true, 0), "EEXIST")
+	check(call("out.txt", "read", true, false, true, 0), "EINVAL")
+	data, _ := fs.ReadFile(task.NS(), base+"out.txt")
+	if string(data) != "keep" {
+		t.Fatal("rejected trunc changed bytes")
+	}
+	check(call("out.txt", "write", true, false, true, 0), "")
+	after, _ = fs.Stat(task.NS(), base+"out.txt")
+	if before.Sys() != after.Sys() || before.Mode() != after.Mode() || after.Size() != 0 {
+		t.Fatal("truncate replaced inode/mode")
+	}
+	check(call("tmpfile_missing", "read", false, false, false, 0), "ENOENT")
+	if e := fs.Mkdir(task.NS(), base+"tmpfile_dir", 0710); e != nil {
+		t.Fatal(e)
+	}
+	dirBefore, _ := fs.Stat(task.NS(), base+"tmpfile_dir")
+	for _, excl := range []bool{false, true} {
+		for _, trunc := range []bool{false, true} {
+			code := "EINVAL"
+			if excl {
+				code = "EEXIST"
+			}
+			check(call("tmpfile_dir", "write", true, excl, trunc, 0777), code)
+		}
+	}
+	dirAfter, _ := fs.Stat(task.NS(), base+"tmpfile_dir")
+	if dirBefore.Sys() != dirAfter.Sys() || dirBefore.Mode() != dirAfter.Mode() || !dirBefore.ModTime().Equal(dirAfter.ModTime()) {
+		t.Fatal("directory mutated")
+	}
+	task.Exit("0")
+	check(call("tmpfile_exit", "write", true, false, false, 0600), "EIO")
+	if _, e := fs.Stat(task.NS(), base+"tmpfile_exit"); e == nil {
+		t.Fatal("exit created")
 	}
 }

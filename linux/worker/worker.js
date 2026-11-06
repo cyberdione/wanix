@@ -9,8 +9,10 @@ import { FileDescription } from "./file-description.js";
 
 const TASKNS = "#task";
 const CALL_BUFFER_BYTES = 16384;
-// asm-generic UAPI fcntl.h: existing-file access and atomic truncation only.
+// asm-generic UAPI fcntl.h: ordinary-mode atomic open subset.
 const O_ACCMODE = 3;
+const O_CREAT = 0o100;
+const O_EXCL = 0o200;
 const O_TRUNC = 0o1000;
 // Explicit parentless Linux bootstrap launch profile, not inherited host state.
 // Linux v6.12 fs/fs_struct.c:167 (init_fs), init/init_task.c:125.
@@ -169,8 +171,7 @@ export function messageHandler(fs, call, tid) {
         try {
             switch (e.data.method) {
             case "path_open_existing": {
-                // Typed existing-file open with backend-atomic optional truncation.
-                // Keep the same task/path and regular-leaf guards as path_open.
+                // Typed atomic open; CREATE type selection belongs to the backend.
                 if (!taskFile(e.data.path, tid)) {
                     call.respond({ok: false, errno: 13});
                     break;
@@ -178,12 +179,17 @@ export function messageHandler(fs, call, tid) {
                 try {
                     const access = e.data.access ?? "read";
                     const truncate = e.data.truncate ?? false;
+                    const create = e.data.create ?? false;
+                    const exclusive = e.data.exclusive ?? false;
+                    const perm = e.data.perm ?? 0;
                     if (!["read", "write", "readwrite"].includes(access) || typeof truncate !== "boolean" ||
-                        (access === "read" && truncate)) {
+                        typeof create !== "boolean" || typeof exclusive !== "boolean" ||
+                        !Number.isInteger(perm) || perm < 0 || perm > 0o777 ||
+                        (!create && perm !== 0) || (exclusive && !create) || (access === "read" && truncate)) {
                         throw Object.assign(new Error("invalid existing open"), {code: "EINVAL"});
                     }
-                    await requireRegularLeaf(fs, e.data.path);
-                    const result = await fs.openFileResult(e.data.path, access, {truncate});
+                    if (!create) await requireRegularLeaf(fs, e.data.path);
+                    const result = await fs.openFileResult(e.data.path, access, {create, exclusive, truncate, perm});
                     let fd;
                     if (result.OK) fd = result.Value;
                     else {
@@ -460,13 +466,18 @@ export async function runLinux(e, caller) {
             if (name === null) return -13;
             const target = `${TASKNS}/${tid}/w/${name}`;
             const flags = a[2] >>> 0, accessMode = flags & O_ACCMODE;
-            // CREATE/EXCL and APPEND remain outside this existing-file subset.
-            if ((flags & ~(O_ACCMODE | O_TRUNC)) || accessMode === O_ACCMODE) return -38;
+            // APPEND and EXCL without CREATE are explicitly unsupported.
+            if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC)) || accessMode === O_ACCMODE) return -38;
+            const create = !!(flags & O_CREAT), exclusive = !!(flags & O_EXCL);
+            if (exclusive && !create) return -38;
+            if (create && (a[3] & ~0o777)) return -38;
+            // Capture once, synchronously, before any transport or suspension.
+            const perm = create ? (a[3] & 0o777) & ~currentUmask : 0;
             const truncate = !!(flags & O_TRUNC);
             if (truncate && accessMode === 0) return -22;
             let opened;
             try { opened = caller.call("path_open_existing", {
-                path: target, access: ["read", "write", "readwrite"][accessMode], truncate,
+                path: target, access: ["read", "write", "readwrite"][accessMode], create, exclusive, truncate, perm,
             }); }
             catch (err) { return -ioErrno(err); }
             if (opened?.ok === false && Number.isInteger(opened.errno) &&

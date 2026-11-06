@@ -64,9 +64,9 @@ test('actual syscall dispatch maps asm-generic TRUNC through real CallBuffer',as
         assert.equal(syscall(56,-100,128,0o1000,0),-22); assert.equal(calls.length,0);
         for(const flags of [0,1,2,0o1001,0o1002]) {
             assert.ok(syscall(56,-100,128,flags,0)>=3);
-            assert.deepEqual(calls.at(-1),{method:'path_open_existing',path:'#task/test/w/out.txt',access:['read','write','readwrite'][flags&3],truncate:!!(flags&0o1000)});
+            assert.deepEqual(calls.at(-1),{method:'path_open_existing',path:'#task/test/w/out.txt',access:['read','write','readwrite'][flags&3],create:false,exclusive:false,truncate:!!(flags&0o1000),perm:0});
         }
-        for(const flags of [64,128,1024,64|0o1001]) {const n=calls.length;assert.equal(syscall(56,-100,128,flags,0),-38);assert.equal(calls.length,n);}
+        for(const flags of [128,1024,0o4000]) {const n=calls.length;assert.equal(syscall(56,-100,128,flags,0),-38);assert.equal(calls.length,n);}
     }}});
     try {await runLinux({data:{bin:Uint8Array.of(0,97,115,109,1,0,0,0,0),tid:'test',args:[],env:[]}},cb);}
     finally {WebAssembly.compile=compile;WebAssembly.instantiate=instantiate;globalThis.postMessage=saved;}

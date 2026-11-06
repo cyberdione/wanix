@@ -14,8 +14,8 @@ test('actual dispatch preserves existing bytes, rejects features before calls, a
         const bytes = new Uint8Array(memory.buffer), view = new DataView(memory.buffer);
         bytes.set(new TextEncoder().encode('out.txt\0'), 128);
         const open = flags => s(56, -100, 128, flags, 0o600);
-        for (const flags of [3, 64, 128, 1024, 64|128|512, 2|1024,
-            64|1, 64|2, 0x8000, 0x10000, 0x20000, 0x80000, -1]) {
+        for (const flags of [3, 128, 1024, 2|1024,
+            0x8000, 0x10000, 0x20000, 0x80000, -1]) {
             const n = calls.length;
             assert.equal(open(flags), -38, String(flags));
             assert.equal(calls.length, n);

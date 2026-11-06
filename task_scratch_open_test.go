@@ -156,3 +156,32 @@ func TestScratchOpenAdmissionBeforeExitCleanup(t *testing.T) {
 		t.Fatalf("owned handle: %v", err)
 	}
 }
+
+func TestScratchCreateExitAdmission(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		r := scratchRoot(t)
+		c := routedTask(t, r, "linux-scratch")
+		name := "#task/" + c.ID() + "/w/tmpfile_exit"
+		start, done := make(chan struct{}), make(chan struct{})
+		go func() { <-start; c.Exit("0"); close(done) }()
+		close(start)
+		fd, err := c.OpenScratchCreateFD(name, "read", false, true, true, 0)
+		<-done
+		st, e := fs.Stat(c.w, "tmpfile_exit")
+		if err == nil {
+			if e != nil || st.Mode().Perm() != 0 {
+				t.Fatalf("committed %v %v", st, e)
+			}
+			if _, _, e = c.FD(fd); !errors.Is(e, fs.ErrClosed) {
+				t.Fatalf("fd survives %v", e)
+			}
+		} else {
+			if !errors.Is(err, fs.ErrClosed) || !errors.Is(e, fs.ErrNotExist) {
+				t.Fatalf("rejected created %v %v", err, e)
+			}
+		}
+		if _, e := c.OpenScratchCreateFD(name, "write", true, true, false, 0777); !errors.Is(e, fs.ErrClosed) {
+			t.Fatalf("postexit %v", e)
+		}
+	}
+}
