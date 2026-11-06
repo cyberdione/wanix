@@ -329,7 +329,12 @@ export async function runLinux(e, caller) {
             vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
             return 0;
         }
-        case 87: case 35: return 0; // unlink of scratch: report success
+        case 35: // asm-generic unlinkat(dirfd, path, flags); no legacy unlink syscall
+            // No Linux unlink backend is wired through messageHandler. Do not
+            // report deletion or use path_touch/truncate as a substitute: open
+            // descriptions must survive removal of the directory entry.
+            // This includes flags == 0 and AT_REMOVEDIR (0x200).
+            return -38; // ENOSYS until removal and open-file lifetime are supported
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
         case 214: return a[0] | 0;  // brk (diagnostic)
