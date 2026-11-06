@@ -1,3 +1,4 @@
+import { exactStatSize, copySizeStatx } from "./statx-core.js";
 import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
 import { FileDescription } from "./file-description.js";
 
@@ -95,7 +96,7 @@ function messageHandler(fs, call, tid) {
             }
             case "path_size": {
                 const stat = await fs.stat(e.data.path);
-                call.respond(stat?.Size ?? 0);
+                call.respond(exactStatSize(stat));
                 break;
             }
             case "path_touch":
@@ -313,21 +314,13 @@ export async function runLinux(e, caller) {
             return 0;
         }
         case 291: { // statx(dirfd, path, flags, mask, buf) — minimal regular-file
-            const uu = u(), vv = v(), buf = a[3] >>> 0, pathPtr = (a[1] >>> 0);
+            const uu = u(), vv = v(), buf = a[4] >>> 0, pathPtr = (a[1] >>> 0);
             let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
             const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
             if (p !== "out.txt" && !scratch) return -13;
-            if (buf + 256 > uu.length) return -14;
-            uu.fill(0, buf, buf + 256);
-            vv.setUint32(buf + 0, 0x7ff, true);
-            vv.setUint32(buf + 4, 4096, true);
-            vv.setUint32(buf + 12, 1, true);
-            vv.setUint32(buf + 24, 33188, true);
-            vv.setBigUint64(buf + 28, 42n, true);
-            const size = Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
-            vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
-            return 0;
+            const size = caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` });
+            return copySizeStatx(inst.exports.memory, buf, size);
         }
         case 35: // asm-generic unlinkat(dirfd, path, flags); no legacy unlink syscall
             // No Linux unlink backend is wired through messageHandler. Do not
