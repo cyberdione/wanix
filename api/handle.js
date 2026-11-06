@@ -8,7 +8,7 @@ export class FilesystemResultProtocolError extends Error {
 }
 
 const filesystemCodes = new Set([
-    "ENOENT", "EACCES", "EPERM", "EEXIST", "EINVAL", "ENOTDIR",
+    "EBADF", "ENOENT", "EACCES", "EPERM", "EEXIST", "EINVAL", "ENOTDIR",
     "EISDIR", "ELOOP", "ENAMETOOLONG", "EIO", "ENOSYS", "EOVERFLOW",
 ]);
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -218,6 +218,10 @@ export class WanixHandle {
     async sync(fd) {
         this.logger(`sync ${fd}`);
         return (await this.peer.call("Sync", [fd])).value;
+    }
+
+    async fstatResult(fd) {
+        return validateResult((await this.peer.call("FstatResult", [fd])).value, validStat);
     }
 
     async fstat(fd) {
