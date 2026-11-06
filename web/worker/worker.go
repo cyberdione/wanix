@@ -23,15 +23,16 @@ import (
 )
 
 type Resource struct {
-	id                int
-	state             string
-	src               string
-	worker            js.Value
-	task              *wanix.Task
-	callbacks         []js.Func
-	exportPorts       []js.Value
-	stopped           bool
-	diagnosticProfile string
+	id                    int
+	state                 string
+	src                   string
+	worker                js.Value
+	task                  *wanix.Task
+	callbacks             []js.Func
+	exportPorts           []js.Value
+	stopped               bool
+	diagnosticProfile     string
+	memoryControlScenario string
 }
 
 type guestSetter interface {
@@ -77,6 +78,9 @@ func (r *Resource) stop() {
 }
 
 func (r *Resource) Start(args ...string) error {
+	if r.memoryControlScenario != "" && (r.diagnosticProfile != "" || !wanix.ValidMemoryControlScenario(r.memoryControlScenario)) {
+		return fs.ErrInvalid
+	}
 	if r.diagnosticProfile != "" && r.diagnosticProfile != wanix.Capture2DiagnosticProfile {
 		return fs.ErrInvalid
 	}
@@ -189,6 +193,10 @@ func (r *Resource) Start(args ...string) error {
 	}
 	if r.diagnosticProfile != "" {
 		payload["diagnosticProfile"] = r.diagnosticProfile
+	}
+	if r.memoryControlScenario != "" {
+		payload["diagnosticProfile"] = wanix.MemoryControlProfile
+		payload["memoryControlScenario"] = r.memoryControlScenario
 	}
 	r.worker.Call("postMessage", map[string]any{"worker": payload}, []any{port, p9})
 

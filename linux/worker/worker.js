@@ -122,6 +122,22 @@ export function capture2TaskEvent(e) {
     return {data: {...e.data, tid: identity}};
 }
 
+const controlScenarios = Object.freeze(['rw','none','ro','cross-none','host-copy','rw-store-readback','none-load','mprotect-hole-prefix']);
+export function controlSelection(data) {
+    const scenario = data.memoryControlScenario;
+    if (data.diagnosticProfile === 'memory-controls-v1') {
+        if (!controlScenarios.includes(scenario)) throw new TypeError('invalid control scenario');
+        return scenario;
+    }
+    if (scenario !== undefined) throw new TypeError('unexpected control scenario');
+    return null;
+}
+export function memoryControlInput(data) {
+    const scenario = controlSelection(data);
+    if (scenario === null) throw new TypeError('control selection required');
+    const tid = capture2TaskEvent({data}).data.tid;
+    return {tid,mode:'memory-controls-v1',fixture:'scalar-i32-v1',scenario};
+}
 self.onmessage = async (e) => {
     if (e.data.worker) {
         console.log("linux task worker started");
@@ -135,7 +151,12 @@ self.onmessage = async (e) => {
         console.log("linux sync worker started");
         const caller = new CallBuffer(e.data.buffer);
         try {
-            if (e.data.diagnosticProfile === "capture-2-authored-layout-v1") {
+            const scenario = controlSelection(e.data);
+            if (scenario !== null) {
+                const input = memoryControlInput(e.data);
+                const {runMemoryControl} = await import('./memory-control-runner.mjs');
+                await runMemoryControl(input, caller);
+            } else if (e.data.diagnosticProfile === "capture-2-authored-layout-v1") {
                 const [{createCapture2Runner}, {createCapture2PairedLoader}, {VMError}] = await Promise.all([
                     import("./capture2-runner.mjs"),
                     import("./capture2-runtime/capture-2-paired-loader-adapter.mjs"),
@@ -160,13 +181,18 @@ async function reportTaskFailure(fs, tid, err) {
 }
 
 async function initializeTaskWorker(e) {
+    const selection = {diagnosticProfile:e.data.worker.diagnosticProfile,
+        memoryControlScenario:e.data.worker.memoryControlScenario};
+    const scenario = controlSelection(selection);
+    if (selection.diagnosticProfile !== undefined && selection.diagnosticProfile !== 'capture-2-authored-layout-v1' && scenario === null)
+        throw new TypeError('unsupported diagnostic profile');
     const fs = new WanixHandle(e.data.worker.port);
     const tid = e.data.worker.tid;
     const env = (await fs.readText(`${TASKNS}/${tid}/env`)).trim().split("\n").filter(line => line.includes("="));
     const args = splitCmdQuoted((await fs.readText(`${TASKNS}/${tid}/cmd`)).trim());
     let bin;
     try {
-        bin = await fs.readFile(args[0]);
+        bin = scenario === null ? await fs.readFile(args[0]) : null;
     } catch (err) {
         await reportTaskFailure(fs, tid, err);
         return;
@@ -189,7 +215,8 @@ async function initializeTaskWorker(e) {
         stderr: `${TASKNS}/${tid}/fd/2`,
         tid,
         stdinText,
-        diagnosticProfile: e.data.worker.diagnosticProfile,
+        diagnosticProfile: selection.diagnosticProfile,
+        ...(scenario === null ? {} : {memoryControlScenario:scenario}),
     });
 }
 
