@@ -9,8 +9,9 @@ import { FileDescription } from "./file-description.js";
 
 const TASKNS = "#task";
 const CALL_BUFFER_BYTES = 16384;
-// asm-generic UAPI fcntl.h. Only plain existing-file opens are supported.
+// asm-generic UAPI fcntl.h: existing-file access and atomic truncation only.
 const O_ACCMODE = 3;
+const O_TRUNC = 0o1000;
 
 
 function admittedName(raw) {
@@ -27,7 +28,7 @@ function taskFile(path, tid) {
 }
 
 const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EACCES: 13,
-    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ELOOP: 40});
+    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40});
 
 async function filesystemValue(fs, method, path) {
     const result = await fs[method](path);
@@ -165,15 +166,26 @@ export function messageHandler(fs, call, tid) {
         try {
             switch (e.data.method) {
             case "path_open_existing": {
-                // Typed regular-file open: no creation, truncation, or flag guessing.
+                // Typed existing-file open with backend-atomic optional truncation.
                 // Keep the same task/path and regular-leaf guards as path_open.
                 if (!taskFile(e.data.path, tid)) {
                     call.respond({ok: false, errno: 13});
                     break;
                 }
                 try {
+                    const access = e.data.access ?? "read";
+                    const truncate = e.data.truncate ?? false;
+                    if (!["read", "write", "readwrite"].includes(access) || typeof truncate !== "boolean" ||
+                        (access === "read" && truncate)) {
+                        throw Object.assign(new Error("invalid existing open"), {code: "EINVAL"});
+                    }
                     await requireRegularLeaf(fs, e.data.path);
-                    const fd = await filesystemValue(fs, "openResult", e.data.path);
+                    const result = await fs.openFileResult(e.data.path, access, {truncate});
+                    let fd;
+                    if (result.OK) fd = result.Value;
+                    else {
+                        throw Object.assign(new Error("filesystem operation failed"), {code: result.Error.Code});
+                    }
                     await publishOpen(fs, call, fd, true);
                 } catch (err) {
                     call.respond({ok: false, errno: filesystemErrnos[err?.code] ?? 5});
@@ -444,12 +456,14 @@ export async function runLinux(e, caller) {
             if (name === null) return -13;
             const target = `${TASKNS}/${tid}/w/${name}`;
             const flags = a[2] >>> 0, accessMode = flags & O_ACCMODE;
-            // Diagnostic subset policy, not Linux's errno for these valid flags.
-            // In particular APPEND needs atomic EOF+write, and CREATE/EXCL/TRUNC
-            // need a guarded backend contract not supplied by this adapter.
-            if ((flags & ~O_ACCMODE) || accessMode === O_ACCMODE) return -38;
+            // CREATE/EXCL and APPEND remain outside this existing-file subset.
+            if ((flags & ~(O_ACCMODE | O_TRUNC)) || accessMode === O_ACCMODE) return -38;
+            const truncate = !!(flags & O_TRUNC);
+            if (truncate && accessMode === 0) return -22;
             let opened;
-            try { opened = caller.call("path_open_existing", { path: target }); }
+            try { opened = caller.call("path_open_existing", {
+                path: target, access: ["read", "write", "readwrite"][accessMode], truncate,
+            }); }
             catch (err) { return -ioErrno(err); }
             if (opened?.ok === false && Number.isInteger(opened.errno) &&
                 opened.errno > 0 && opened.errno <= 4095) return -opened.errno;

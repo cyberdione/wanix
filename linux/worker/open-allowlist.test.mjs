@@ -26,7 +26,7 @@ test('openat actual dispatch admits flat aliases and denies descendants without 
             const got = open(path);
             assert.ok(got.result >= 3, path);
             const target = '#task/test/w/' + (path.endsWith('out.txt') ? 'out.txt' : 'tmpfile_x');
-            assert.deepEqual(got.calls, [['path_open_existing', {path: target}]]);
+            assert.deepEqual(got.calls, [['path_open_existing', {path: target, access: 'read', truncate: false}]]);
         }
         bytes[bytes.length - 1] = 111;
         const n = calls.length;
