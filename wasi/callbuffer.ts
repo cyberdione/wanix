@@ -1,4 +1,4 @@
-import { decode, encode } from 'cbor-x';
+import { decode, encode } from 'cbor-x/index-no-eval';
 
 export interface Caller {
     call(method: string, params: {}): any;
