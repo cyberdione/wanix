@@ -42,6 +42,47 @@ try {
   await runLinux({data:{tid:"diagnostic",bin:new Uint8Array([0,97,115,109,1,0,0,0,0]),args:[],env:[]}},caller);
   assert.equal(calls.filter(([method])=>method==="path_size").length,1);
  }
+ // FD routing uses actual openat population of the real handler's openFiles map.
+ for (const backendFD of [0, 0xffffffff, 0x100000000, 0n]) {
+  const memory=new WebAssembly.Memory({initial:1,maximum:256});
+  const calls=[];
+  const caller={call(method,args){
+   calls.push([method,args]);
+   if(method==="path_touch")return true;
+   if(method==="path_open")return backendFD;
+   if(method==="fd_stat_size")return 9;
+   if(method==="path_size")return 11;
+   if(method==="fd_close" || method==="exit")return true;
+   throw Error("unexpected FD test call");
+  }};
+  WebAssembly.compile=async()=>({diagnostic:true});
+  WebAssembly.instantiate=async(_module,imports)=>({exports:{memory,_start(){
+   const bytes=new Uint8Array(memory.buffer);
+   bytes.set(new TextEncoder().encode("out.txt\0"),64);bytes[80]=0;
+   const syscall=imports["ferrule.linux.syscall"].syscall;
+   const guest=syscall(56,-100,64,0,0,0,0);
+   assert.equal(guest,3);assert.notEqual(guest,backendFD);
+   const valid=typeof backendFD==="number" && backendFD<=0xffffffff;
+   for(const pathname of [0,80]) {
+    const count=calls.length;
+    assert.equal(syscall(291,guest,pathname,0x1000,0x7ff,1024,0),valid?0:-5);
+    const delta=calls.slice(count);
+    assert.equal(delta.filter(([method])=>method==="path_size").length,0);
+    assert.equal(delta.filter(([method])=>method==="fd_stat_size").length,valid?1:0);
+    if(valid){assert.equal(delta[0][1].fd,backendFD);assert.equal(new DataView(memory.buffer).getBigUint64(1064,true),9n);}
+   }
+   assert.equal(syscall(291,guest,64,0x1000,0x7ff,1024,0),0);
+   assert.equal(calls.at(-1)[0],"path_size");
+   assert.equal(syscall(291,-100,0,0x1000,0x7ff,1024,0),-95);
+   assert.equal(syscall(291,0,0,0x1000,0x7ff,1024,0),-95);
+   assert.equal(syscall(57,guest,0,0,0,0,0),0);
+   const count=calls.length;
+   assert.equal(syscall(291,guest,0,0x1000,0x7ff,1024,0),-9);
+   assert.equal(calls.length,count);
+  }}});
+  await runLinux({data:{tid:"diagnostic",stdinText:"",bin:new Uint8Array([0,97,115,109,1,0,0,0,0]),args:[],env:[]}},caller);
+  assert.equal(calls.filter(([method])=>method==="fd_close").length,1);
+ }
  console.log("actual statx dispatch diagnostic cases PASS; fake Wasm startup, producer/flags/path not acceptance");
 } finally {
  WebAssembly.compile=originalCompile;

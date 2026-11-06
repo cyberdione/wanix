@@ -23,3 +23,17 @@ export function copySizeStatx(memory, pointer, size) {
     destination.set(record, start);
     return 0;
 }
+
+// Backend FD wire contract: preserve Number major0 integer, never Size coercion.
+export function validBackendFD(fd) {
+    return typeof fd === "number" && Number.isInteger(fd) && fd >= 0 && fd <= 0xffffffff;
+}
+
+export function fdStatSize(guestFD, openFiles, streams, caller, syntheticStdin) {
+    if (guestFD === -100 || (guestFD === 0 && syntheticStdin && !streams[0])) return -95;
+    const description = openFiles.get(guestFD);
+    const handle = description ? description.handle : streams[guestFD];
+    if (!handle) return -9;
+    if (!validBackendFD(handle.fd)) return -5;
+    return caller.call("fd_stat_size", {fd:handle.fd});
+}
