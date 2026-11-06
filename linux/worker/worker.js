@@ -12,6 +12,9 @@ const CALL_BUFFER_BYTES = 16384;
 // asm-generic UAPI fcntl.h: existing-file access and atomic truncation only.
 const O_ACCMODE = 3;
 const O_TRUNC = 0o1000;
+// Explicit parentless Linux bootstrap launch profile, not inherited host state.
+// Linux v6.12 fs/fs_struct.c:167 (init_fs), init/init_task.c:125.
+const LINUX_BOOTSTRAP_UMASK = 0o022;
 
 
 function admittedName(raw) {
@@ -344,6 +347,7 @@ export async function runLinux(e, caller) {
     const tid = e.data.tid;
     const stdinBytes = e.data.stdinText == null ? null : new TextEncoder().encode(e.data.stdinText);
     let stdinPos = 0;
+    let currentUmask = LINUX_BOOTSTRAP_UMASK; // Each runLinux is a fresh launch, not exec.
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
     const memoryBytes = 16 * 1024 * 1024;
@@ -563,6 +567,11 @@ export async function runLinux(e, caller) {
         }
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
+        case 166: { // asm-generic umask; Linux v6.12 kernel/sys.c:1906-1910
+            const previous = currentUmask;
+            currentUmask = a[0] & 0o777;
+            return previous;
+        }
         case 214: return -38; // brk: no loader-owned break base; explicitly unsupported
         case 222: { // Bounded diagnostic RW arena, not Linux virtual memory.
             const len = a[1] >>> 0, flags = a[3] >>> 0;
