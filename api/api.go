@@ -40,6 +40,7 @@ func Responder(sess mux.Session, task *wanix.Task) {
 		"Close":      syscaller.close,
 		"Sync":       syscaller.sync,
 		"Read":       syscaller.read,
+		"ReadAt":     syscaller.readAt,
 		"Write":      syscaller.write,
 		"WriteAt":    syscaller.writeAt,
 		"ReadDir":    syscaller.readDir,
