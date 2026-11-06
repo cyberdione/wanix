@@ -43,8 +43,8 @@ test('broker-only touch/open enforce task-local names and reject existing leaf l
     const calls = [], replies = [];
     let stat = {Mode: 0x8000, IsDir: false};
     const fs = {
-        async lstat(path) {calls.push(['lstat', path]); if (stat instanceof Error) throw stat; return stat;},
-        async open(path) {calls.push(['open', path]); return 10;},
+        async lstatResult(path) {calls.push(['lstat', path]); if (stat instanceof Error) throw stat; return {OK:true, Value:stat};},
+        async openResult(path) {calls.push(['open', path]); return {OK:true, Value:10};},
         async writeFile(path) {calls.push(['writeFile', path]);},
     };
     const handler = messageHandler(fs, {respond(value) {replies.push(value);}}, 'test');
