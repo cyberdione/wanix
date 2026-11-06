@@ -72,3 +72,87 @@ func TestScratchOpenOwnerRoute(t *testing.T) {
 		t.Fatalf("foreign changed %q %v", b, err)
 	}
 }
+
+func TestScratchOpenExitAdmission(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		r := scratchRoot(t)
+		c := routedTask(t, r, "linux-scratch")
+		name := "#task/" + c.ID() + "/w/out.txt"
+		if err := fs.WriteFile(c.w, "out.txt", []byte("keep"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		parent, err := c.OpenScratchFile(name, "readwrite", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parentFD := r.OpenFD(parent, name)
+		start, done := make(chan struct{}), make(chan struct{})
+		go func() { <-start; c.Exit("7"); close(done) }()
+		close(start)
+		fd, err := c.OpenScratchFD(name, "write", true)
+		<-done
+		b, readErr := fs.ReadFile(c.w, "out.txt")
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if err == nil {
+			if len(b) != 0 {
+				t.Fatalf("successful truncate: %q", b)
+			}
+			if _, _, e := c.FD(fd); !errors.Is(e, fs.ErrClosed) {
+				t.Fatalf("FD survives: %v", e)
+			}
+		} else if !errors.Is(err, fs.ErrClosed) || string(b) != "keep" {
+			t.Fatalf("rejected destructive open: %q %v", b, err)
+		}
+		for _, trunc := range []bool{false, true} {
+			if _, e := c.OpenScratchFile(name, "write", trunc); !errors.Is(e, fs.ErrClosed) {
+				t.Fatalf("file: %v", e)
+			}
+			if _, e := c.OpenScratchFD(name, "write", trunc); !errors.Is(e, fs.ErrClosed) {
+				t.Fatalf("fd: %v", e)
+			}
+		}
+		after, e := fs.ReadFile(c.w, "out.txt")
+		if e != nil || string(after) != string(b) {
+			t.Fatalf("post-exit changed: %q %v", after, e)
+		}
+		h, _, e := r.FD(parentFD)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = h.(interface{ Write([]byte) (int, error) }).Write([]byte("live")); e != nil {
+			t.Fatal(e)
+		}
+		r.CloseFD(parentFD)
+		b, e = fs.ReadFile(r.NS(), "#task/"+c.ID()+"/exit")
+		if e != nil || string(b) != "7\n" {
+			t.Fatalf("status: %q %v", b, e)
+		}
+	}
+}
+func TestScratchOpenAdmissionBeforeExitCleanup(t *testing.T) {
+	r := scratchRoot(t)
+	c := routedTask(t, r, "linux-scratch")
+	if err := fs.WriteFile(c.w, "out.txt", []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	name := "#task/" + c.ID() + "/w/out.txt"
+	fd, err := c.OpenScratchFD(name, "write", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _, err := c.FD(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.AddCleanup(func() {
+		if _, e := c.OpenScratchFD(name, "write", true); !errors.Is(e, fs.ErrClosed) {
+			t.Errorf("cleanup: %v", e)
+		}
+	})
+	c.Exit("0")
+	if _, err := h.Stat(); !errors.Is(err, fs.ErrClosed) {
+		t.Fatalf("owned handle: %v", err)
+	}
+}

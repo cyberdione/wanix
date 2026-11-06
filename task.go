@@ -64,6 +64,7 @@ type Task struct {
 	export    fs.FS
 	w         fs.FS
 	mu        sync.Mutex
+	exitMu    sync.RWMutex // status snapshots must not reenter mu through FD routing
 }
 
 func Export(t *Task, export fs.FS) {
@@ -143,7 +144,9 @@ func (t *Task) Exit(status string) {
 		return
 	}
 	t.exited = true
+	t.exitMu.Lock()
 	t.exit = status
+	t.exitMu.Unlock()
 	cleanup := t.cleanup
 	t.cleanup = nil
 	files := t.fds
@@ -302,6 +305,9 @@ func (r *Task) Open(name string) (fs.File, error) {
 }
 
 func (r *Task) taskMap() fskit.MapFS {
+	r.exitMu.RLock()
+	exit := r.exit
+	r.exitMu.RUnlock()
 	m := fskit.MapFS{
 		"ctl": misc.ControlFile(&cli.Command{
 			Usage: "ctl",
@@ -385,7 +391,7 @@ func (r *Task) taskMap() fskit.MapFS {
 			}
 			return nil
 		}),
-		"exit": misc.FieldFile(r.exit, func(in []byte) error {
+		"exit": misc.FieldFile(exit, func(in []byte) error {
 			if len(in) > 0 {
 				status := strings.TrimSpace(string(in))
 				go r.Exit(status)

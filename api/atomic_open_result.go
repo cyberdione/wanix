@@ -32,10 +32,13 @@ func (s *syscaller) openFileResult(r rpc.Responder, c *rpc.Call) {
 		fail(syscall.ENOSYS)
 		return
 	}
-	f, err := s.task.OpenScratchFile(name, access, trunc)
+	fd, err := s.task.OpenScratchFD(name, access, trunc)
 	if err != nil {
 		_ = r.Return(failedFilesystemResult[uint64](err))
 		return
 	}
-	s.publishOpenResult(r, f, name)
+	value := uint64(fd)
+	if err := r.Return(filesystemResult[uint64]{OK: true, Value: &value}); err != nil {
+		_ = s.task.CloseFD(fd)
+	}
 }
