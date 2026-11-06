@@ -45,7 +45,7 @@ test('broker forwards exact ceiling through real adapter and response codec, nev
     };
     for(const size of [0,0x7ffffffe,0x7fffffff,0x80000000,Number.MAX_SAFE_INTEGER]) {
         assert.deepEqual(await request(size),{ok:false,errno:75});
-        assert.equal(seen.MaxExistingSize,size);assert.equal(seen.Truncate,true);
+        assert.equal(seen.MaxExistingSize,BigInt(size));assert.equal(seen.Truncate,true);
     }
     for(const size of [undefined,null,-1,1.5,NaN,Infinity,2**53,1n,'1']) {
         assert.deepEqual(await request(size),{ok:false,errno:22});assert.equal(seen,undefined);
