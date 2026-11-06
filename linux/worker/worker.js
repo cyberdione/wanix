@@ -10,6 +10,31 @@ import { FileDescription } from "./file-description.js";
 const TASKNS = "#task";
 const CALL_BUFFER_BYTES = 16384;
 
+function admittedName(raw) {
+    if (typeof raw !== "string" || !/^\/?(?:out\.txt|(?:tmp\/)?tmpfile_[^/\0]+)$/.test(raw)) return null;
+    const path = raw.startsWith("/") ? raw.slice(1) : raw;
+    return path.startsWith("tmp/") ? path.slice(4) : path;
+}
+
+function taskFile(path, tid) {
+    const prefix = `${TASKNS}/${tid}/w/`;
+    if (typeof path !== "string" || !path.startsWith(prefix)) return false;
+    const name = path.slice(prefix.length);
+    return !name.includes("/") && admittedName(name) === name;
+}
+
+async function requireRegularLeaf(fs, path, allowMissing = false) {
+    let stat;
+    try { stat = await fs.lstat(path); }
+    catch (err) {
+        if (allowMissing && (err?.code === "ENOENT" || /file does not exist|no such file/i.test(String(err)))) return;
+        throw err;
+    }
+    // This rejects existing leaf links, not parent links or replacement races.
+    if (!stat || stat.IsDir || (stat.Mode & 0xf000) !== 0x8000) throw new Error("permission denied: unsupported file type");
+}
+
+
 function ioErrno(err) {
     const codes = { EIO: 5, EBADF: 9, EAGAIN: 11, EACCES: 13, EINVAL: 22,
         ENOSPC: 28, EPIPE: 32, ENOSYS: 38, EOVERFLOW: 75, EINTR: 4 };
@@ -103,6 +128,11 @@ export function messageHandler(fs, call, tid) {
         try {
             switch (e.data.method) {
             case "path_open": {
+                const stream = [0, 1, 2].some(fd => e.data.path === `${TASKNS}/${tid}/fd/${fd}`);
+                if (!stream) {
+                    if (!taskFile(e.data.path, tid)) throw new Error("permission denied");
+                    await requireRegularLeaf(fs, e.data.path);
+                }
                 const fd = await fs.open(e.data.path);
                 call.respond(fd);
                 break;
@@ -165,6 +195,8 @@ export function messageHandler(fs, call, tid) {
                 break;
             }
             case "path_touch":
+                if (!taskFile(e.data.path, tid)) throw new Error("permission denied");
+                await requireRegularLeaf(fs, e.data.path, true);
                 await fs.writeFile(e.data.path, "");
                 call.respond(true);
                 break;
@@ -355,17 +387,19 @@ export async function runLinux(e, caller) {
         }
         case 56: { // openat(dirfd, path, flags, mode)
             if (a[0] !== -100) return -9;
-            const uu = u(); let end = a[1] >>> 0;
+            const uu = u(), start = a[1] >>> 0;
+            if (!start || start >= uu.length) return -14;
+            let end = start;
             while (end < uu.length && uu[end] !== 0) end++;
-            const raw = new TextDecoder().decode(uu.subarray(a[1] >>> 0, end));
-            const p = raw.replace(/^\/+/, "");
-            if (p === "" || p.split("/").some(seg => seg === ".." || seg === "")) return -13;
-            // capability restriction: only the pre-authorized scratch file
-            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
-            if (p !== "out.txt" && !scratch) return -13;
-            const target = `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}`;
-            const created = caller.call("path_touch", { path: target });
-            if (created && created.__wanix_error) return -13;
+            if (end === uu.length) return -14;
+            const raw = new TextDecoder().decode(uu.subarray(start, end));
+            const name = admittedName(raw);
+            if (name === null) return -13;
+            const target = `${TASKNS}/${tid}/w/${name}`;
+            try {
+                const created = caller.call("path_touch", { path: target });
+                if (created && created.__wanix_error) return -13;
+            } catch (_) { return -13; }
             const handle = new FileHandle(ioCaller, target);
             try { handle.open(); } catch (_) { return -13; }
             const fd = nextFd++;
