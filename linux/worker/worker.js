@@ -353,15 +353,21 @@ export async function runLinux(e, caller) {
             return n;
         }
         case 57: { const h = openFiles.get(a[0]); if (!h) return -9; h.close(); openFiles.delete(a[0]); return 0; }
-        case 62: { // _llseek(fd, off_hi, off_lo, result_ptr, whence) — open files only
+        case 62: { // _llseek(fd, off_hi, off_lo, result_ptr, whence)
+            // The positional backend uses safe Numbers, not full signed-64 offsets.
             const fd = a[0] | 0, off = (a[1] * 4294967296) + (a[2] >>> 0), res = a[3] >>> 0, whence = a[4] | 0;
             const h = openFiles.get(fd);
-            if (!h) return -9;
-            if (whence < 0 || whence > 2) return -22;
-            const uu = u(), vv = v();
-            if (res + 8 > uu.length) return -14;
+            const stream = streams[fd] || (fd === 0 && stdinBytes !== null);
+            if (!h && !stream) return -9;
+            // Linux checks SEEK_MAX before asking whether the descriptor seeks.
+            if (whence < 0 || whence > 4) return -22;
+            if (stream) return -29;
+            // DATA/HOLE remain unsupported by this regular-file adapter.
             const pos = h.seek(off, whence);
             if (pos < 0) return pos;
+            // Linux moves the position before copying the result to userspace.
+            const uu = u(), vv = v();
+            if (res + 8 > uu.length) return -14;
             vv.setBigUint64(res, BigInt(pos), true);
             return 0;
         }
