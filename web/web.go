@@ -25,6 +25,7 @@ func New(root *wanix.Task) fskit.MapFS {
 	workerfs := worker.New(root)
 	webfs := fskit.MapFS{
 		"console": jsutil.ConsoleFS,
+		"stderr":  jsutil.StderrFS,
 		"dom":     dom.New(),
 		"caches":  caches.New(),
 		"worker":  workerfs,
