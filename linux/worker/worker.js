@@ -251,6 +251,7 @@ export async function runLinux(e, caller) {
     let nextFd = 3;
     let exitCode = 0;
     let inst;
+    let arenaNext; // Monotonic, nonreclaiming; starts beyond the startup reservation.
 
     function syscall(nr, a0, a1, a2, a3, a4, a5) {
         const a = [a0 | 0, a1 | 0, a2 | 0, a3 | 0, a4 | 0, a5 | 0];
@@ -418,18 +419,42 @@ export async function runLinux(e, caller) {
         }
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
-        case 214: return a[0] | 0;  // brk (diagnostic)
-        case 222: { // diagnostic anonymous arena; file mappings are unsupported
-            const len = a[1] >>> 0, flags = a[3] | 0, fd = a[4] | 0;
-            if (!(flags & 0x20) || fd !== -1) return -38;
-            const m = inst.exports.memory;
-            const pages = Math.ceil(Math.max(len, 1) / 65536);
-            const basePages = m.buffer.byteLength / 65536;
-            if (basePages + pages > memoryBytes / 65536) return -12;
-            m.grow(pages);
-            return basePages * 65536;
+        case 214: return -38; // brk: no loader-owned break base; explicitly unsupported
+        case 222: { // Bounded diagnostic RW arena, not Linux virtual memory.
+            const len = a[1] >>> 0, flags = a[3] >>> 0;
+            if (!len || (a[5] & 4095)) return -22;
+            const type = flags & 3;
+            if (!type) return -22;
+            // Nonfixed addresses are ignored hints. fd=-1 and offset=0 are
+            // shim restrictions; ENOSYS here is not native Linux policy.
+            if (a[2] !== 3 || flags !== 0x22 || a[4] !== -1 || a[5] !== 0) return -38;
+            const size = Math.ceil(len / 4096) * 4096;
+            if (size >= 2 ** 32 || arenaNext > memoryBytes || size > memoryBytes - arenaNext) return -12;
+            const end = arenaNext + size, m = inst.exports.memory;
+            const pages = Math.max(0, Math.ceil((end - m.buffer.byteLength) / 65536));
+            if (pages) {
+                try { m.grow(pages); }
+                catch (err) { if (err instanceof RangeError) return -12; throw err; }
+            }
+            const base = arenaNext;
+            new Uint8Array(m.buffer).fill(0, base, end);
+            arenaNext = end;
+            return base;
         }
-        case 226: case 215: return 0;
+        case 215: { // No inaccessible holes can be enforced in linear memory.
+            const start = a[0] >>> 0, len = a[1] >>> 0;
+            if ((start & 4095) || !len) return -22;
+            const size = Math.ceil(len / 4096) * 4096;
+            if (size > 2 ** 32 - start) return -22;
+            return -38;
+        }
+        case 226: { // Basic checks only; even zero-length requests are unsupported.
+            const start = a[0] >>> 0, len = a[1] >>> 0;
+            if ((start & 4095) || (a[2] & ~7)) return -22;
+            const size = Math.ceil(len / 4096) * 4096;
+            if (size > 2 ** 32 - start) return -12;
+            return -38;
+        }
         case 93: case 94: exitCode = a[0] & 255; throw { kind: "exit" };
         default: return -38;
         }
@@ -440,6 +465,7 @@ export async function runLinux(e, caller) {
     const m = inst.exports.memory;
     const basePages = m.buffer.byteLength / 65536;
     m.grow(2);
+    arenaNext = m.buffer.byteLength;
     const stackPtr = buildInitialStack(m, basePages * 65536, 2 * 65536, argv, envp);
     try {
         inst.exports._start(stackPtr);
