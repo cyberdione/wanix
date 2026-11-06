@@ -111,6 +111,17 @@ function splitCmdQuoted(line) {
     return out;
 }
 
+// Go Task.ID is a canonical decimal string; normalize only this diagnostic hop.
+export function capture2TaskEvent(e) {
+    const tid = e.data.tid;
+    if (typeof tid !== "string" || !/^[1-9][0-9]*$/.test(tid) || tid.length > 10)
+        throw new TypeError("canonical diagnostic task ID required");
+    const identity = Number(tid);
+    if (identity > 2147483647)
+        throw new TypeError("diagnostic task ID exceeds positive i32");
+    return {data: {...e.data, tid: identity}};
+}
+
 self.onmessage = async (e) => {
     if (e.data.worker) {
         console.log("linux task worker started");
@@ -132,7 +143,7 @@ self.onmessage = async (e) => {
                 ]);
                 await createCapture2Runner({createPairedLoader: createCapture2PairedLoader,
                     createLinuxPersonality, extractWasm,
-                    isCopyFault: error => error instanceof VMError && error.code === "EFAULT"})(e, caller);
+                    isCopyFault: error => error instanceof VMError && error.code === "EFAULT"})(capture2TaskEvent(e), caller);
             } else if (e.data.diagnosticProfile !== undefined) {
                 throw new TypeError("unsupported diagnostic profile");
             } else await runLinux(e, caller);
