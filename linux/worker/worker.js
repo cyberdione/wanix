@@ -8,6 +8,20 @@ import { FileDescription } from "./file-description.js";
 //     the wasm32 artifact with the ferrule.linux.syscall import.
 
 const TASKNS = "#task";
+const CALL_BUFFER_BYTES = 16384;
+
+function ioErrno(err) {
+    const codes = { EIO: 5, EBADF: 9, EAGAIN: 11, EACCES: 13, EINVAL: 22,
+        ENOSPC: 28, EPIPE: 32, ENOSYS: 38, EOVERFLOW: 75, EINTR: 4 };
+    return codes[err?.code] ?? (Number.isInteger(err?.errno) && err.errno > 0 && err.errno <= 4095 ? err.errno : 5);
+}
+
+function transfer(handle, operation, data) {
+    let n;
+    try { n = handle[operation](data); }
+    catch (err) { return -ioErrno(err); }
+    return Number.isSafeInteger(n) && n >= -4095 && n <= data.byteLength ? n : -5;
+}
 
 // split a cmd line on spaces, honoring single/double quotes (mirrors the
 // wanix task element's env parsing) so `rc -c 'echo hi'` keeps one argument
@@ -64,7 +78,7 @@ async function initializeTaskWorker(e) {
     }
     let stdinText = null;
     try { stdinText = await fs.readText(`${TASKNS}/${tid}/w/stdin.txt`); } catch (_) {}
-    const buffer = new SharedArrayBuffer(16384);
+    const buffer = new SharedArrayBuffer(CALL_BUFFER_BYTES);
     const call = new CallBuffer(buffer);
     const worker = new Worker(e.data.worker.url, {type: "module"});
     worker.onmessage = messageHandler(fs, call, tid);
@@ -184,6 +198,10 @@ export function messageHandler(fs, call, tid) {
                 call.respond({__wanix_error: `unsupported method: ${e.data.method}`});
             }
         } catch (err) {
+            if (e.data.method === "fd_read" || e.data.method === "fd_write") {
+                call.respond({ioError: ioErrno(err)});
+                return;
+            }
             call.respond({__wanix_error: err instanceof Error ? err.message : String(err)});
         }
     };
@@ -240,10 +258,28 @@ export async function runLinux(e, caller) {
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
     const memoryBytes = 16 * 1024 * 1024;
+    // CallBuffer reserves 16 bytes for CBOR overhead beyond its 8-byte header.
+    // Uint8Array replies use at most a tag plus a five-byte length header here.
+    const maxRead = caller.maxData ?? (CALL_BUFFER_BYTES - 8 - 16);
+    const ioCaller = { call(method, params) {
+        const value = caller.call(method, params);
+        if (method === "fd_read" || method === "fd_write") {
+            if (value?.ioError) {
+                const err = new Error("backend I/O failure");
+                err.errno = value.ioError;
+                throw err;
+            }
+            if (method === "fd_read" && value !== null &&
+                (!(value instanceof Uint8Array) || value.length > params.count)) {
+                throw new Error("invalid read response");
+            }
+        }
+        return value;
+    } };
     const streams = {};
     for (const [fd, path] of [[0, e.data.stdin], [1, e.data.stdout], [2, e.data.stderr]]) {
         if (!path) continue;
-        const h = new FileHandle(caller, path);
+        const h = new FileHandle(ioCaller, path);
         h.open();
         streams[fd] = h;
     }
@@ -268,7 +304,8 @@ export async function runLinux(e, caller) {
         case 66: { // writev(fd, iov, iovcnt)
             const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
             const vv = v(), uu = u();
-            if (cnt > 1024 || iov > uu.length || cnt * 8 > uu.length - iov) return -14;
+            if (cnt < 0 || cnt > 1024) return -22;
+            if (iov > uu.length || cnt * 8 > uu.length - iov) return -14;
             let total = 0;
             const parts = [];
             for (let i = 0; i < cnt; i++) {
@@ -284,8 +321,7 @@ export async function runLinux(e, caller) {
             })();
             const handle = streams[fd] ?? openFiles.get(fd);
             if (!handle) return -9;
-            const n = handle.write(data);
-            return n ?? 0;
+            return transfer(handle, "write", data);
         }
         case 65: { // readv: sequential reads into the supplied vectors
             const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
@@ -315,7 +351,7 @@ export async function runLinux(e, caller) {
             if (buf > uu.length || count > uu.length - buf) return -14;
             const handle = streams[fd] ?? openFiles.get(fd);
             if (!handle) return -9;
-            return handle.write(uu.subarray(buf, buf + count)) ?? 0;
+            return transfer(handle, "write", uu.subarray(buf, buf + count));
         }
         case 56: { // openat(dirfd, path, flags, mode)
             if (a[0] !== -100) return -9;
@@ -330,7 +366,7 @@ export async function runLinux(e, caller) {
             const target = `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}`;
             const created = caller.call("path_touch", { path: target });
             if (created && created.__wanix_error) return -13;
-            const handle = new FileHandle(caller, target);
+            const handle = new FileHandle(ioCaller, target);
             try { handle.open(); } catch (_) { return -13; }
             const fd = nextFd++;
             openFiles.set(fd, new FileDescription(handle));
@@ -347,8 +383,8 @@ export async function runLinux(e, caller) {
             }
             const h = streams[fd] ?? openFiles.get(fd);
             if (!h) return -9;
-            const data = new Uint8Array(count);
-            const n = h.read(data);
+            const data = new Uint8Array(Math.min(count, maxRead));
+            const n = transfer(h, "read", data);
             if (n > 0) uu.set(data.subarray(0, n), buf);
             return n;
         }
