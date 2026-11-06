@@ -9,8 +9,19 @@ import { FileDescription } from "./file-description.js";
 
 const TASKNS = "#task";
 const CALL_BUFFER_BYTES = 16384;
-// asm-generic UAPI fcntl.h. Only plain existing-file opens are supported.
+// asm-generic UAPI fcntl.h: ordinary-mode atomic open subset.
+// Selected wasm32 Linux ABI: CONFIG_ARCH_32BIT_OFF_T=y semantics (no
+// force_o_largefile), per Linux v6.12 include/linux/fcntl.h. Pointer width
+// alone does not select this policy. This is bounded Number-safe admission.
+const O_LARGEFILE = 0x8000;
+const MAX_NON_LFS = 0x7fffffff;
 const O_ACCMODE = 3;
+const O_CREAT = 0o100;
+const O_EXCL = 0o200;
+const O_TRUNC = 0o1000;
+// Explicit parentless Linux bootstrap launch profile, not inherited host state.
+// Linux v6.12 fs/fs_struct.c:167 (init_fs), init/init_task.c:125.
+const LINUX_BOOTSTRAP_UMASK = 0o022;
 
 
 function admittedName(raw) {
@@ -27,7 +38,7 @@ function taskFile(path, tid) {
 }
 
 const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EACCES: 13,
-    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ELOOP: 40});
+    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40, EOVERFLOW: 75});
 
 async function filesystemValue(fs, method, path) {
     const result = await fs[method](path);
@@ -165,15 +176,32 @@ export function messageHandler(fs, call, tid) {
         try {
             switch (e.data.method) {
             case "path_open_existing": {
-                // Typed regular-file open: no creation, truncation, or flag guessing.
-                // Keep the same task/path and regular-leaf guards as path_open.
+                // Typed atomic open; CREATE type selection belongs to the backend.
                 if (!taskFile(e.data.path, tid)) {
                     call.respond({ok: false, errno: 13});
                     break;
                 }
                 try {
-                    await requireRegularLeaf(fs, e.data.path);
-                    const fd = await filesystemValue(fs, "openResult", e.data.path);
+                    const access = e.data.access ?? "read";
+                    const truncate = e.data.truncate ?? false;
+                    const create = e.data.create ?? false;
+                    const exclusive = e.data.exclusive ?? false;
+                    const perm = e.data.perm ?? 0;
+                    const maxExistingSize = e.data.maxExistingSize;
+                    if (!["read", "write", "readwrite"].includes(access) || typeof truncate !== "boolean" ||
+                        typeof create !== "boolean" || typeof exclusive !== "boolean" ||
+                        !Number.isInteger(perm) || perm < 0 || perm > 0o777 ||
+                        (!create && perm !== 0) || (exclusive && !create) || (access === "read" && truncate) ||
+                        !Number.isSafeInteger(maxExistingSize) || maxExistingSize < 0) {
+                        throw Object.assign(new Error("invalid existing open"), {code: "EINVAL"});
+                    }
+                    if (!create) await requireRegularLeaf(fs, e.data.path);
+                    const result = await fs.openFileResult(e.data.path, access, {create, exclusive, truncate, perm, maxExistingSize});
+                    let fd;
+                    if (result.OK) fd = result.Value;
+                    else {
+                        throw Object.assign(new Error("filesystem operation failed"), {code: result.Error.Code});
+                    }
                     await publishOpen(fs, call, fd, true);
                 } catch (err) {
                     call.respond({ok: false, errno: filesystemErrnos[err?.code] ?? 5});
@@ -332,6 +360,7 @@ export async function runLinux(e, caller) {
     const tid = e.data.tid;
     const stdinBytes = e.data.stdinText == null ? null : new TextEncoder().encode(e.data.stdinText);
     let stdinPos = 0;
+    let currentUmask = LINUX_BOOTSTRAP_UMASK; // Each runLinux is a fresh launch, not exec.
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
     const memoryBytes = 16 * 1024 * 1024;
@@ -444,12 +473,20 @@ export async function runLinux(e, caller) {
             if (name === null) return -13;
             const target = `${TASKNS}/${tid}/w/${name}`;
             const flags = a[2] >>> 0, accessMode = flags & O_ACCMODE;
-            // Diagnostic subset policy, not Linux's errno for these valid flags.
-            // In particular APPEND needs atomic EOF+write, and CREATE/EXCL/TRUNC
-            // need a guarded backend contract not supplied by this adapter.
-            if ((flags & ~O_ACCMODE) || accessMode === O_ACCMODE) return -38;
+            // APPEND and EXCL without CREATE are explicitly unsupported.
+            if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC | O_LARGEFILE)) || accessMode === O_ACCMODE) return -38;
+            const create = !!(flags & O_CREAT), exclusive = !!(flags & O_EXCL);
+            if (exclusive && !create) return -38;
+            if (create && (a[3] & ~0o777)) return -38;
+            // Capture once, synchronously, before any transport or suspension.
+            const perm = create ? (a[3] & 0o777) & ~currentUmask : 0;
+            const truncate = !!(flags & O_TRUNC);
+            if (truncate && accessMode === 0) return -22;
             let opened;
-            try { opened = caller.call("path_open_existing", { path: target }); }
+            try { opened = caller.call("path_open_existing", {
+                path: target, access: ["read", "write", "readwrite"][accessMode], create, exclusive, truncate, perm,
+                maxExistingSize: flags & O_LARGEFILE ? Number.MAX_SAFE_INTEGER : MAX_NON_LFS,
+            }); }
             catch (err) { return -ioErrno(err); }
             if (opened?.ok === false && Number.isInteger(opened.errno) &&
                 opened.errno > 0 && opened.errno <= 4095) return -opened.errno;
@@ -549,6 +586,11 @@ export async function runLinux(e, caller) {
         }
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
+        case 166: { // asm-generic umask; Linux v6.12 kernel/sys.c:1906-1910
+            const previous = currentUmask;
+            currentUmask = a[0] & 0o777;
+            return previous;
+        }
         case 214: return -38; // brk: no loader-owned break base; explicitly unsupported
         case 222: { // Bounded diagnostic RW arena, not Linux virtual memory.
             const len = a[1] >>> 0, flags = a[3] >>> 0;
