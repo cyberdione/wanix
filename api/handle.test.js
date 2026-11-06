@@ -146,6 +146,8 @@ test("actual Go CBOR fixtures decode with duplex codec and validate unchanged", 
         } }).decode(bytes.length);
     }
     assert.deepEqual(await resultHandle(decoded.openZero).openResult("x"), {OK: true, Value: 0});
+    assert.deepEqual(await resultHandle(decoded.openZero).openFileResult("x", "read"), {OK: true, Value: 0});
+    assert.deepEqual(await resultHandle(decoded.notExist).openFileResult("x", "read"), {OK: false, Error: {Code: "ENOENT"}});
     assert.deepEqual(await resultHandle(decoded.notExist).openResult("x"), {OK: false, Error: {Code: "ENOENT"}});
     for (const method of ["statResult", "lstatResult"]) {
         assert.deepEqual(await resultHandle(decoded.statNegative)[method]("x"), {
@@ -157,4 +159,53 @@ test("actual Go CBOR fixtures decode with duplex codec and validate unchanged", 
         }
         await assert.rejects(resultHandle({OK: true, Value: {Size: 0, Mode: 0, IsDir: false}})[method]("x"), FilesystemResultProtocolError);
     }
+});
+
+test("openFileResult sends the direct six-field semantic map with explicit access", async () => {
+    for (const access of ["read", "write", "readwrite"]) {
+        const calls = [], value = await codecRoundtrip({OK: true, Value: 0});
+        assert.deepEqual(await resultHandle(value, calls).openFileResult("/x", access), value);
+        const request = {Path: "/x", Access: access, Create: false, Exclusive: false, Truncate: false, Perm: 0};
+        assert.deepEqual(calls, [["OpenFileResult", request]]);
+        assert.deepEqual(await codecRoundtrip(calls[0][1]), request);
+    }
+    const calls = [], value = {OK: false, Error: {Code: "ENOSYS"}};
+    assert.equal(await resultHandle(value, calls).openFileResult("/x", "write", {
+        create: true, exclusive: true, truncate: true, perm: 0o640,
+    }), value);
+    assert.deepEqual(calls, [["OpenFileResult", {
+        Path: "/x", Access: "write", Create: true, Exclusive: true, Truncate: true, Perm: 0o640,
+    }]]);
+});
+
+test("openFileResult rejects numeric flags and invalid semantic requests before RPC", async () => {
+    const calls = [], h = resultHandle(null, calls);
+    for (const args of [["x"], ["x", 0], ["x", "append"], [null, "read"],
+        ["x", "read", {truncate: true}], ["x", "write", {exclusive: true}],
+        ["x", "write", {perm: 0o600}], ["x", "write", {create: 1}],
+        ["x", "write", {create: true, perm: 0o1000}], ["x", "write", {create: true, perm: 1.5}]]) {
+        await assert.rejects(h.openFileResult(...args), TypeError);
+    }
+    assert.deepEqual(calls, []);
+});
+
+test("openFileResult malformed or missing replies never close an unrelated fd", async () => {
+    for (const value of [undefined, null, [], {}, {OK: true}, {OK: false},
+        {OK: true, Value: 7, Error: {Code: "EIO"}},
+        {OK: false, Value: 7, Error: {Code: "ENOENT"}},
+        {OK: false, Error: {Code: "UNKNOWN"}},
+        ...[-1, 1.5, 2 ** 53, "7", 7n].map(Value => ({OK: true, Value}))]) {
+        const calls = [];
+        await assert.rejects(resultHandle(value, calls).openFileResult("x", "read"), FilesystemResultProtocolError);
+        assert.deepEqual(calls.map(c => c[0]), ["OpenFileResult"]);
+    }
+    const h = handle({peer: {async call() { return undefined; }}});
+    await assert.rejects(h.openFileResult("x", "read"), FilesystemResultProtocolError);
+});
+
+test("openFileResult RPC failure stays distinct without retry or cleanup", async () => {
+    const calls = [], failure = new Error("unsupported selector");
+    const h = handle({peer: {async call(...args) { calls.push(args); throw failure; }}});
+    await assert.rejects(h.openFileResult("x", "read"), error => error === failure);
+    assert.equal(calls.length, 1);
 });
