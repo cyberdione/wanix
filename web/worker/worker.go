@@ -23,14 +23,15 @@ import (
 )
 
 type Resource struct {
-	id          int
-	state       string
-	src         string
-	worker      js.Value
-	task        *wanix.Task
-	callbacks   []js.Func
-	exportPorts []js.Value
-	stopped     bool
+	id                int
+	state             string
+	src               string
+	worker            js.Value
+	task              *wanix.Task
+	callbacks         []js.Func
+	exportPorts       []js.Value
+	stopped           bool
+	diagnosticProfile string
 }
 
 type guestSetter interface {
@@ -76,6 +77,9 @@ func (r *Resource) stop() {
 }
 
 func (r *Resource) Start(args ...string) error {
+	if r.diagnosticProfile != "" && r.diagnosticProfile != wanix.Capture2DiagnosticProfile {
+		return fs.ErrInvalid
+	}
 	if r.stopped || r.state == "running" {
 		return fs.ErrClosed
 	}
@@ -174,7 +178,7 @@ func (r *Resource) Start(args ...string) error {
 		return nil
 	}))
 
-	r.worker.Call("postMessage", map[string]any{"worker": map[string]any{
+	payload := map[string]any{
 		"id":   r.id,
 		"tid":  r.task.ID(),
 		"port": port,
@@ -182,7 +186,11 @@ func (r *Resource) Start(args ...string) error {
 		"cmd":  strings.Join(args, " "),
 		"env":  env,
 		"url":  url,
-	}}, []any{port, p9})
+	}
+	if r.diagnosticProfile != "" {
+		payload["diagnosticProfile"] = r.diagnosticProfile
+	}
+	r.worker.Call("postMessage", map[string]any{"worker": payload}, []any{port, p9})
 
 	r.state = "running"
 	r.task.AddCleanup(r.stop)
