@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 
 	"tractor.dev/toolkit-go/duplex/rpc"
 	"tractor.dev/wanix/fs"
@@ -50,8 +51,9 @@ func (s *syscaller) read(r rpc.Responder, c *rpc.Call) {
 	r.Return(buf[:n])
 }
 
-// readAt uses positioned reads where supported. Streams retain their sequential
-// cursor; the caller's offset is only bookkeeping for those descriptors.
+// readAt requires ReaderAt for positioned reads: seeking and restoring cannot
+// preserve the cursor against concurrent sequential reads. Non-seekable streams
+// still read sequentially; their offset is only caller bookkeeping.
 func (s *syscaller) readAt(r rpc.Responder, c *rpc.Call) {
 	var args []any
 	c.Receive(&args)
@@ -72,12 +74,17 @@ func (s *syscaller) readAt(r rpc.Responder, c *rpc.Call) {
 	if !ok {
 		panic("arg 2 is not a uint64")
 	}
+	if offset > math.MaxInt64 {
+		r.Return(fmt.Errorf("ReadAt offset exceeds MaxInt64: %d", offset))
+		return
+	}
 	buf := make([]byte, count)
 	var n int
-	if _, randomAccess := f.(io.ReaderAt); randomAccess {
-		n, err = fs.ReadAt(f, buf, int64(offset))
+	if reader, ok := f.(io.ReaderAt); ok {
+		n, err = reader.ReadAt(buf, int64(offset))
 	} else if _, seekable := f.(io.Seeker); seekable {
-		n, err = fs.ReadAt(f, buf, int64(offset))
+		r.Return(fmt.Errorf("%w: ReadAt requires io.ReaderAt for seekable files", fs.ErrNotSupported))
+		return
 	} else if reader, ok := f.(interface {
 		ReadContext(context.Context, []byte) (int, error)
 	}); ok {
