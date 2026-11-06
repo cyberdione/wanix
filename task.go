@@ -71,10 +71,14 @@ type Task struct {
 	exitMu              sync.RWMutex // status snapshots must not reenter mu through FD routing
 }
 
-func Export(t *Task, export fs.FS) {
+func Export(t *Task, export fs.FS) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.exited {
+		return fs.ErrClosed
+	}
 	t.export = export
+	return nil
 }
 
 func SetWorker(t *Task, worker any) {
@@ -346,6 +350,9 @@ func (r *Task) Open(name string) (fs.File, error) {
 }
 
 func (r *Task) taskMap() fskit.MapFS {
+	r.mu.Lock()
+	export := r.export
+	r.mu.Unlock()
 	r.exitMu.RLock()
 	exit := r.exit
 	r.exitMu.RUnlock()
@@ -445,8 +452,8 @@ func (r *Task) taskMap() fskit.MapFS {
 		"ns": r.ns,
 		"w":  r.w,
 	}
-	if r.export != nil {
-		m["export"] = r.export
+	if export != nil {
+		m["export"] = export
 	}
 	return m
 }
