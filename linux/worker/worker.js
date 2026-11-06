@@ -9,6 +9,9 @@ import { FileDescription } from "./file-description.js";
 
 const TASKNS = "#task";
 const CALL_BUFFER_BYTES = 16384;
+// asm-generic UAPI fcntl.h. Only plain existing-file opens are supported.
+const O_ACCMODE = 3;
+
 
 function admittedName(raw) {
     if (typeof raw !== "string" || !/^\/?(?:out\.txt|(?:tmp\/)?tmpfile_[^/\0]+)$/.test(raw)) return null;
@@ -36,7 +39,7 @@ async function requireRegularLeaf(fs, path, allowMissing = false) {
 
 
 function ioErrno(err) {
-    const codes = { EIO: 5, EBADF: 9, EAGAIN: 11, EACCES: 13, EINVAL: 22,
+    const codes = { ENOENT: 2, EEXIST: 17, ENOTDIR: 20, EIO: 5, EBADF: 9, EAGAIN: 11, EACCES: 13, EINVAL: 22,
         ENOSPC: 28, EPIPE: 32, ENOSYS: 38, EOVERFLOW: 75, EINTR: 4 };
     return codes[err?.code] ?? (Number.isInteger(err?.errno) && err.errno > 0 && err.errno <= 4095 ? err.errno : 5);
 }
@@ -127,6 +130,23 @@ export function messageHandler(fs, call, tid) {
         if (!e.data.method) return;
         try {
             switch (e.data.method) {
+            case "path_open_existing": {
+                // Typed regular-file open: no creation, truncation, or flag guessing.
+                // Keep the same task/path and regular-leaf guards as path_open.
+                if (!taskFile(e.data.path, tid)) {
+                    call.respond({ok: false, errno: 13});
+                    break;
+                }
+                try {
+                    await requireRegularLeaf(fs, e.data.path);
+                    const fd = await fs.open(e.data.path);
+                    if (!Number.isSafeInteger(fd) || fd < 0) throw new Error("invalid open response");
+                    call.respond({ok: true, fd});
+                } catch (err) {
+                    call.respond({ok: false, errno: ioErrno(err)});
+                }
+                break;
+            }
             case "path_open": {
                 const stream = [0, 1, 2].some(fd => e.data.path === `${TASKNS}/${tid}/fd/${fd}`);
                 if (!stream) {
@@ -367,7 +387,9 @@ export async function runLinux(e, caller) {
                 if (base > uu.length || len > uu.length - base) return -14;
                 vectors.push([base, len]);
             }
-            if (!(streams[fd] ?? openFiles.get(fd)) && !(fd === 0 && stdinBytes !== null)) return -9;
+            const description = openFiles.get(fd);
+            if (description && !description.canRead()) return -9;
+            if (!(streams[fd] ?? description) && !(fd === 0 && stdinBytes !== null)) return -9;
             let total = 0;
             for (const [base, len] of vectors) {
                 if (!len) continue;
@@ -396,14 +418,21 @@ export async function runLinux(e, caller) {
             const name = admittedName(raw);
             if (name === null) return -13;
             const target = `${TASKNS}/${tid}/w/${name}`;
-            try {
-                const created = caller.call("path_touch", { path: target });
-                if (created && created.__wanix_error) return -13;
-            } catch (_) { return -13; }
+            const flags = a[2] >>> 0, accessMode = flags & O_ACCMODE;
+            // Diagnostic subset policy, not Linux's errno for these valid flags.
+            // In particular APPEND needs atomic EOF+write, and CREATE/EXCL/TRUNC
+            // need a guarded backend contract not supplied by this adapter.
+            if ((flags & ~O_ACCMODE) || accessMode === O_ACCMODE) return -38;
+            let opened;
+            try { opened = caller.call("path_open_existing", { path: target }); }
+            catch (err) { return -ioErrno(err); }
+            if (opened?.ok === false && Number.isInteger(opened.errno) &&
+                opened.errno > 0 && opened.errno <= 4095) return -opened.errno;
+            if (opened?.ok !== true || !Number.isSafeInteger(opened.fd) || opened.fd < 0) return -5;
             const handle = new FileHandle(ioCaller, target);
-            try { handle.open(); } catch (_) { return -13; }
+            handle.fd = opened.fd;
             const fd = nextFd++;
-            openFiles.set(fd, new FileDescription(handle));
+            openFiles.set(fd, new FileDescription(handle, accessMode));
             return fd;
         }
         case 63: { // read(fd, buf, count) — task-provided stdin text or streams

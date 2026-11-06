@@ -26,7 +26,7 @@ test('openat actual dispatch admits flat aliases and denies descendants without 
             const got = open(path);
             assert.ok(got.result >= 3, path);
             const target = '#task/test/w/' + (path.endsWith('out.txt') ? 'out.txt' : 'tmpfile_x');
-            assert.deepEqual(got.calls, [['path_touch', {path: target}], ['path_open', {path: target}]]);
+            assert.deepEqual(got.calls, [['path_open_existing', {path: target}]]);
         }
         bytes[bytes.length - 1] = 111;
         const n = calls.length;
@@ -35,7 +35,7 @@ test('openat actual dispatch admits flat aliases and denies descendants without 
     }}});
     try {
         await runLinux({data: {bin: Uint8Array.of(0,97,115,109,1,0,0,0,0), tid: 'test', args: [], env: []}},
-            {call(method, arg) { calls.push([method, arg]); return method === 'path_open' ? 10 : true; }});
+            {call(method, arg) { calls.push([method, arg]); return method === 'path_open_existing' ? {ok: true, fd: 10} : true; }});
     } finally { WebAssembly.compile = compile; WebAssembly.instantiate = instantiate; }
 });
 

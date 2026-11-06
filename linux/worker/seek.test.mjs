@@ -22,6 +22,7 @@ async function fixture(options, check) {
             calls.push([method, arg]);
             switch (method) {
             case 'path_open': return nextHandle++;
+            case 'path_open_existing': return {ok: true, fd: nextHandle++};
             case 'path_touch': case 'fd_close': case 'exit': return true;
             case 'path_size': return size;
             case 'fd_read': return Uint8Array.of(0x42);

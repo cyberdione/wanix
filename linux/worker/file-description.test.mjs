@@ -8,7 +8,7 @@ function fixture() {
         write(data, {at}) { bytes.set(data, at); size = Math.max(size, at+data.length); return data.length; },
         getSize() { return size; }, close() {},
     };
-    return new FileDescription(handle);
+    return new FileDescription(handle, 2);
 }
 test('sequential writes, seek, short reads and EOF share one offset', () => {
     const f = fixture();
@@ -31,7 +31,7 @@ test('invalid seek leaves offset unchanged; seeking beyond EOF is allowed', () =
 for (const operation of ['read', 'write']) {
     test(`${operation} rejects unsafe requested end before backend access`, () => {
         let calls = 0;
-        const f = new FileDescription({ [operation]() { calls++; return 0; } });
+        const f = new FileDescription({ [operation]() { calls++; return 0; } }, 2);
         assert.equal(f.seek(Number.MAX_SAFE_INTEGER - 1, 0), Number.MAX_SAFE_INTEGER - 1);
         // Even an EOF/short result must not be guessed before I/O.
         const buffer = Uint8Array.of(17, 18);
@@ -51,7 +51,7 @@ for (const operation of ['read', 'write']) {
             calls.push([buffer.byteLength, options.at]);
             if (operation === 'read' && result > 0) buffer[0] = 42;
             return result;
-        } });
+        } }, 2);
         f.seek(Number.MAX_SAFE_INTEGER - 2, 0);
         const buffer = new Uint8Array(2);
         assert.equal(f[operation](buffer), 1);
@@ -75,11 +75,20 @@ for (const operation of ['read', 'write']) {
     });
     test(`${operation} rejects malformed backend counts without advancing`, () => {
         let result;
-        const f = new FileDescription({ [operation]() { return result; } });
+        const f = new FileDescription({ [operation]() { return result; } }, 2);
         f.seek(Number.MAX_SAFE_INTEGER - 1, 0);
         for (result of [2, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, 0.5, undefined, null]) {
             assert.equal(f[operation](new Uint8Array(1)), -5);
             assert.equal(f.offset, Number.MAX_SAFE_INTEGER - 1);
         }
+    });
+}
+
+for (const [mode, operation] of [[0, 'write'], [1, 'read'], [3, 'read'], [3, 'write']]) {
+    test(`mode ${mode} denies ${operation} including zero length`, () => {
+        let calls = 0;
+        const f = new FileDescription({[operation]() { calls++; return 0; }}, mode);
+        for (const size of [0, 1]) assert.equal(f[operation](new Uint8Array(size)), -9);
+        assert.equal(calls, 0); assert.equal(f.offset, 0);
     });
 }
