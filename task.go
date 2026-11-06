@@ -13,6 +13,7 @@ import (
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/fs/fskit"
 	"tractor.dev/wanix/fs/memfs"
+	"tractor.dev/wanix/fs/scratchfs"
 	"tractor.dev/wanix/fs/vfs"
 	"tractor.dev/wanix/misc"
 	"tractor.dev/wanix/misc/shlex"
@@ -119,7 +120,7 @@ func (t *Task) Tasks() (tasks []*Task) {
 // kludge: this would imply task specific registration, but its global.
 // this is until we have a better registration system.
 func (t *Task) Register(kind string, driver TaskDriver) {
-	t.fsys.types[kind] = driver
+	t.fsys.Register(kind, driver)
 }
 
 // AddCleanup registers resources owned by this task. Late registrations close immediately.
@@ -439,8 +440,14 @@ func NewTaskFS() *TaskFS {
 	// empty namespace process
 	d.Register("auto", autoDriver(func(t *Task) error {
 		d.mu.Lock()
-		defer d.mu.Unlock()
+		drivers := make(map[string]TaskDriver, len(d.types))
 		for kind, driver := range d.types {
+			drivers[kind] = driver
+		}
+		d.mu.Unlock()
+		// Drivers can resolve task routes or register other drivers. Never hold
+		// the registry lock while invoking their callbacks.
+		for kind, driver := range drivers {
 			if driver.Check(t) {
 				t.kind = kind
 				return driver.Start(t)
@@ -451,18 +458,50 @@ func NewTaskFS() *TaskFS {
 	return d
 }
 
+// linuxScratchSelector is an allocation profile, never a driver kind.
+const linuxScratchSelector = "linux-scratch"
+
+type TaskScratchPolicy uint8
+
+const (
+	LegacyScratch TaskScratchPolicy = iota
+	LinuxRegularScratch
+)
+
+type TaskAllocOptions struct {
+	Scratch TaskScratchPolicy
+}
+
 func (d *TaskFS) Register(kind string, driver TaskDriver) {
+	if kind == linuxScratchSelector {
+		panic("wanix: linux-scratch is a reserved allocation selector")
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.types[kind] = driver
 }
 
 func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
+	return d.AllocWithOptions(kind, parent, TaskAllocOptions{})
+}
+
+// AllocWithOptions chooses owned storage before publishing the task. The policy
+// is not inherited and is never changed by executable detection, Start or Exit.
+func (d *TaskFS) AllocWithOptions(kind string, parent *Task, opts TaskAllocOptions) (*Task, error) {
+	if opts.Scratch != LegacyScratch && (opts.Scratch != LinuxRegularScratch || kind != "linux") {
+		return nil, fs.ErrInvalid
+	}
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	driver, ok := d.types[kind]
-	d.mu.Unlock()
 	if !ok {
 		return nil, fs.ErrNotExist
+	}
+	var writable fs.FS
+	if opts.Scratch == LinuxRegularScratch {
+		writable = scratchfs.New()
+	} else {
+		writable = memfs.New()
 	}
 	d.nextID++
 	rid := strconv.Itoa(d.nextID)
@@ -475,7 +514,7 @@ func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
 		fds:       make(map[int]*openFile),
 		closedFDs: make(map[int]bool),
 		fdIdx:     3,
-		w:         memfs.New(),
+		w:         writable,
 	}
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), TaskContextKey, p))
 	p.cancel = cancel
@@ -494,9 +533,14 @@ func (d *TaskFS) vfsNS(ctx context.Context) (*vfs.NS, error) {
 		"new": fskit.OpenFunc(func(ctx context.Context, name string) (fs.File, error) {
 			if name == "." {
 				var nodes []fs.DirEntry
+				d.mu.Lock()
 				for kind := range d.types {
 					nodes = append(nodes, fskit.Entry(kind, 0555))
 				}
+				if _, ok := d.types["linux"]; ok {
+					nodes = append(nodes, fskit.Entry(linuxScratchSelector, 0555))
+				}
+				d.mu.Unlock()
 				return fskit.DirFile(fskit.Entry("new", 0555), nodes...), nil
 			}
 			return &fskit.FuncFile{
@@ -509,7 +553,13 @@ func (d *TaskFS) vfsNS(ctx context.Context) (*vfs.NS, error) {
 							return err
 						}
 					}
-					p, err := d.Alloc(name, t)
+					kind := name
+					opts := TaskAllocOptions{}
+					if name == linuxScratchSelector {
+						kind = "linux"
+						opts.Scratch = LinuxRegularScratch
+					}
+					p, err := d.AllocWithOptions(kind, t, opts)
 					if err != nil {
 						return err
 					}
@@ -520,10 +570,10 @@ func (d *TaskFS) vfsNS(ctx context.Context) (*vfs.NS, error) {
 		}),
 	}
 	fsys := vfs.New(ctx)
-	if err := fsys.Bind(fskit.MapFS(d.aliases), ".", "."); err != nil {
+	if err := fsys.Bind(taskEntries{d: d, aliases: true}, ".", "."); err != nil {
 		return nil, err
 	}
-	if err := fsys.Bind(fskit.MapFS(d.resources), ".", "."); err != nil {
+	if err := fsys.Bind(taskEntries{d: d}, ".", "."); err != nil {
 		return nil, err
 	}
 	if err := fsys.Bind(m, ".", "."); err != nil {
@@ -531,8 +581,8 @@ func (d *TaskFS) vfsNS(ctx context.Context) (*vfs.NS, error) {
 	}
 	t, ok := FromContext(ctx)
 	if ok {
-		if _, exists := d.resources[t.ID()]; exists {
-			if err := fsys.Bind(d.resources[t.ID()], ".", "self"); err != nil {
+		if task, err := d.Lookup(t.ID()); err == nil {
+			if err := fsys.Bind(task, ".", "self"); err != nil {
 				return nil, err
 			}
 		}
@@ -573,3 +623,36 @@ func (d *TaskFS) OpenContext(ctx context.Context, name string) (fs.File, error) 
 	}
 	return fs.OpenContext(ctx, ns, name)
 }
+
+// taskEntries keeps namespace bindings live while each map read uses a locked snapshot.
+type taskEntries struct {
+	d       *TaskFS
+	aliases bool
+}
+
+func (e taskEntries) snapshot() fskit.MapFS {
+	e.d.mu.Lock()
+	defer e.d.mu.Unlock()
+	src := e.d.resources
+	if e.aliases {
+		src = e.d.aliases
+	}
+	m := make(fskit.MapFS, len(src))
+	for k, v := range src {
+		m[k] = v
+	}
+	return m
+}
+func (e taskEntries) Route(ctx context.Context, name string) (fs.FS, string, error) {
+	if name == "." {
+		return e, name, nil
+	}
+	m := e.snapshot()
+	target, rel, err := m.Route(ctx, name)
+	if fs.Equal(target, m) {
+		return e, rel, err
+	}
+	return target, rel, err
+}
+func (e taskEntries) Open(name string) (fs.File, error)     { return e.snapshot().Open(name) }
+func (e taskEntries) Stat(name string) (fs.FileInfo, error) { return e.snapshot().Stat(name) }
