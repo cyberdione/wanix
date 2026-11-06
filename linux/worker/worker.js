@@ -1,3 +1,4 @@
+import { exactStatSize, copySizeStatx, validBackendFD, fdStatSize } from "./statx-core.js";
 import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
 import { FileDescription } from "./file-description.js";
 
@@ -216,6 +217,12 @@ export function messageHandler(fs, call, tid) {
                 }
                 const fd = await filesystemValue(fs, "openResult", e.data.path);
                 await publishOpen(fs, call, fd, false);
+                break;
+            }
+            case "fd_stat_size": {
+                if (!validBackendFD(e.data.fd)) throw new Error("invalid backend fd");
+                const stat = await fs.fstat(e.data.fd);
+                call.respond(exactStatSize(stat));
                 break;
             }
             case "path_size": {
@@ -535,10 +542,17 @@ export async function runLinux(e, caller) {
         case 291: { // statx: task-local regular files, TYPE and SIZE only
             const flags = a[2] >>> 0, mask = a[3] >>> 0;
             if ((flags & ~0x7900) || (flags & 0x6000) === 0x6000 || (mask & 0x80000000)) return -22;
-            // Empty-path fd lookup and forced/cache-only sync are not implemented.
-            if (flags & 0x7000) return -38;
             const uu = u(), buf = a[4] >>> 0, start = a[1] >>> 0;
-            if (!buf || buf > uu.length || 256 > uu.length - buf || !start || start >= uu.length) return -14;
+            if (!buf || buf > uu.length || 256 > uu.length - buf) return -14;
+            // Only the empty-path slice is new: AT_EMPTY_PATH resolves a NULL or
+            // zero-length path through the opened backend handle. Forced and
+            // cache-only sync, and nonempty AT_EMPTY_PATH, stay unsupported below.
+            if ((flags & 0x1000) && !(flags & 0x6000) && (start === 0 || (start < uu.length && uu[start] === 0))) {
+                const size = fdStatSize(a[0], openFiles, streams, caller, stdinBytes !== null);
+                return typeof size === "number" && size < 0 ? size : copySizeStatx(inst.exports.memory, buf, size);
+            }
+            if (flags & 0x7000) return -38;
+            if (!start || start >= uu.length) return -14;
             let end = start;
             while (end < uu.length && uu[end] !== 0) end++;
             if (end === uu.length) return -14;
