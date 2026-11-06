@@ -11,6 +11,7 @@ import (
 	"tractor.dev/wanix/fs/fskit"
 	"tractor.dev/wanix/fs/pipe"
 	"tractor.dev/wanix/gojs"
+	"tractor.dev/wanix/linux"
 	"tractor.dev/wanix/misc/jsutil"
 	"tractor.dev/wanix/wasi"
 	"tractor.dev/wanix/web/caches"
@@ -43,6 +44,7 @@ func New(root *wanix.Task) fskit.MapFS {
 	root.Register("js", &JSDriver{Workers: workerfs, Root: root})
 	root.Register("wasi", &wasi.Driver{Workers: workerfs})
 	root.Register("gojs", &gojs.Driver{Workers: workerfs})
+	root.Register("linux", &linux.Driver{Workers: workerfs})
 	return webfs
 }
 
