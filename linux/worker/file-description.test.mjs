@@ -27,3 +27,59 @@ test('invalid seek leaves offset unchanged; seeking beyond EOF is allowed', () =
     assert.equal(f.seek(Number.MAX_SAFE_INTEGER+1,0),-75); assert.equal(f.offset,4);
     assert.equal(f.read(new Uint8Array(1)),0);
 });
+
+for (const operation of ['read', 'write']) {
+    test(`${operation} rejects unsafe requested end before backend access`, () => {
+        let calls = 0;
+        const f = new FileDescription({ [operation]() { calls++; return 0; } });
+        assert.equal(f.seek(Number.MAX_SAFE_INTEGER - 1, 0), Number.MAX_SAFE_INTEGER - 1);
+        // Even an EOF/short result must not be guessed before I/O.
+        const buffer = Uint8Array.of(17, 18);
+        assert.equal(f[operation](buffer), -75);
+        assert.equal(calls, 0);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER - 1);
+        assert.deepEqual([...buffer], [17, 18]);
+        assert.equal(f.seek(1, 1), Number.MAX_SAFE_INTEGER);
+        assert.equal(f[operation](new ArrayBuffer(1)), -75);
+        assert.equal(calls, 0);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER);
+    });
+    test(`${operation} advances only by actual admitted transfer count`, () => {
+        const calls = [];
+        let result = 1;
+        const f = new FileDescription({ [operation](buffer, options) {
+            calls.push([buffer.byteLength, options.at]);
+            if (operation === 'read' && result > 0) buffer[0] = 42;
+            return result;
+        } });
+        f.seek(Number.MAX_SAFE_INTEGER - 2, 0);
+        const buffer = new Uint8Array(2);
+        assert.equal(f[operation](buffer), 1);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER - 1);
+        if (operation === 'read') assert.deepEqual([...buffer], [42, 0]);
+        result = 0;
+        assert.equal(f[operation](new Uint8Array(1)), 0);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER - 1);
+        result = -5;
+        assert.equal(f[operation](new Uint8Array(1)), -5);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER - 1);
+        result = 1;
+        assert.equal(f[operation](new Uint8Array(1)), 1);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER);
+        result = 0;
+        assert.equal(f[operation](new ArrayBuffer(0)), 0);
+        assert.equal(f.offset, Number.MAX_SAFE_INTEGER);
+        assert.deepEqual(calls, [[2, Number.MAX_SAFE_INTEGER - 2],
+            [1, Number.MAX_SAFE_INTEGER - 1], [1, Number.MAX_SAFE_INTEGER - 1],
+            [1, Number.MAX_SAFE_INTEGER - 1], [0, Number.MAX_SAFE_INTEGER]]);
+    });
+    test(`${operation} rejects malformed backend counts without advancing`, () => {
+        let result;
+        const f = new FileDescription({ [operation]() { return result; } });
+        f.seek(Number.MAX_SAFE_INTEGER - 1, 0);
+        for (result of [2, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, 0.5, undefined, null]) {
+            assert.equal(f[operation](new Uint8Array(1)), -5);
+            assert.equal(f.offset, Number.MAX_SAFE_INTEGER - 1);
+        }
+    });
+}

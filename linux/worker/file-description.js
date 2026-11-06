@@ -1,13 +1,17 @@
 // A regular-file open description over Wanix positional file operations.
 export class FileDescription {
     constructor(handle) { this.handle = handle; this.offset = 0; }
-    read(buffer) {
-        const n = this.handle.read(buffer, { at: this.offset });
-        if (n > 0) this.offset += n;
-        return n;
-    }
-    write(buffer) {
-        const n = this.handle.write(buffer, { at: this.offset });
+    read(buffer) { return this.transfer('read', buffer); }
+    write(buffer) { return this.transfer('write', buffer); }
+    transfer(operation, buffer) {
+        // The positional backend admits only exact, nonnegative Number offsets.
+        const count = buffer.byteLength;
+        if (!Number.isSafeInteger(this.offset) || this.offset < 0 ||
+            !Number.isSafeInteger(count) || count < 0 ||
+            count > Number.MAX_SAFE_INTEGER - this.offset) return -75;
+        const n = this.handle[operation](buffer, { at: this.offset });
+        // Do not turn a malformed backend result into a count or cursor update.
+        if (!Number.isSafeInteger(n) || n > count) return -5;
         if (n > 0) this.offset += n;
         return n;
     }
