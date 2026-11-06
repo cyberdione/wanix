@@ -1,4 +1,4 @@
-import { exactStatSize, copySizeStatx } from "./statx-core.js";
+import { exactStatSize, copySizeStatx, validBackendFD, fdStatSize } from "./statx-core.js";
 import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
 import { FileDescription } from "./file-description.js";
 
@@ -92,6 +92,12 @@ function messageHandler(fs, call, tid) {
             case "path_open": {
                 const fd = await fs.open(e.data.path);
                 call.respond(fd);
+                break;
+            }
+            case "fd_stat_size": {
+                if (!validBackendFD(e.data.fd)) throw new Error("invalid backend fd");
+                const stat = await fs.fstat(e.data.fd);
+                call.respond(exactStatSize(stat));
                 break;
             }
             case "path_size": {
@@ -315,7 +321,16 @@ export async function runLinux(e, caller) {
         }
         case 291: { // statx(dirfd, path, flags, mask, buf) — minimal regular-file
             const uu = u(), vv = v(), buf = a[4] >>> 0, pathPtr = (a[1] >>> 0);
+            // Only the empty-path slice is new; nonempty paths keep inherited behavior.
+            if ((a[2] & 0x1000) && pathPtr === 0) {
+                const size = fdStatSize(a[0], openFiles, streams, caller, stdinBytes !== null);
+                return typeof size === "number" && size < 0 ? size : copySizeStatx(inst.exports.memory, buf, size);
+            }
             let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
+            if ((a[2] & 0x1000) && pathPtr < uu.length && e2 === pathPtr) {
+                const size = fdStatSize(a[0], openFiles, streams, caller, stdinBytes !== null);
+                return typeof size === "number" && size < 0 ? size : copySizeStatx(inst.exports.memory, buf, size);
+            }
             const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
             if (p !== "out.txt" && !scratch) return -13;
