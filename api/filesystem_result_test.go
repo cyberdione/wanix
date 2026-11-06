@@ -26,7 +26,7 @@ func TestFilesystemCode(t *testing.T) {
 	}{
 		{&fs.PathError{Op: "open", Path: "x", Err: fs.ErrNotExist}, "ENOENT"},
 		{fmt.Errorf("wrapped: %w", syscall.EPERM), "EPERM"},
-		{syscall.ENOSYS, "EIO"}, {syscall.Errno(0), "EIO"},
+		{syscall.ENOSYS, "ENOSYS"}, {syscall.Errno(0), "EIO"},
 		{fs.ErrPermission, "EACCES"}, {fs.ErrExist, "EEXIST"}, {fs.ErrInvalid, "EINVAL"},
 		{fs.ErrClosed, "EIO"}, {context.Canceled, "EIO"},
 		{errors.New("file does not exist: permission denied"), "EIO"},
