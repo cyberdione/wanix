@@ -356,14 +356,17 @@ function buildInitialStack(memory, base, capacity, argv, envp) {
     return base;
 }
 
-export async function runLinux(e, caller) {
+// Shared dispatch/FD state. memory exposes byteLength, read(at, size) returning
+// owned Uint8Array bytes, and write(at, bytes), with checked access on every call.
+// It exposes neither a raw view nor memory growth. arena is a separate explicit
+// legacy diagnostic policy; absence means ENOSYS, not simulated allocation.
+// finish preserves the existing normal-exit cleanup; traps/cancellation remain
+// the caller's lifecycle responsibility, as in the original worker.
+export function createLinuxPersonality(e, caller, memory, { arena = null } = {}) {
     const tid = e.data.tid;
     const stdinBytes = e.data.stdinText == null ? null : new TextEncoder().encode(e.data.stdinText);
     let stdinPos = 0;
     let currentUmask = LINUX_BOOTSTRAP_UMASK; // Each runLinux is a fresh launch, not exec.
-    const wasm = extractWasm(e.data.bin);
-    const argv = e.data.args, envp = e.data.env;
-    const memoryBytes = 16 * 1024 * 1024;
     // CallBuffer reserves 16 bytes for CBOR overhead beyond its 8-byte header.
     // Uint8Array replies use at most a tag plus a five-byte length header here.
     const maxRead = caller.maxData ?? (CALL_BUFFER_BYTES - 8 - 16);
@@ -392,20 +395,29 @@ export async function runLinux(e, caller) {
     const openFiles = new Map();
     let nextFd = 3;
     let exitCode = 0;
-    let inst;
-    let arenaNext; // Monotonic, nonreclaiming; starts beyond the startup reservation.
 
-    function syscall(nr, a0, a1, a2, a3, a4, a5) {
-        const a = [a0 | 0, a1 | 0, a2 | 0, a3 | 0, a4 | 0, a5 | 0];
-        const u = () => new Uint8Array(inst.exports.memory.buffer);
-        const v = () => new DataView(inst.exports.memory.buffer);
-        const __r = __syscall(nr, a0, a1, a2, a3, a4, a5);
-        return __r;
+    function putScalar(at, size, method, value) {
+        const bytes = new Uint8Array(size);
+        new DataView(bytes.buffer)[method](0, value, true);
+        memory.write(at, bytes);
     }
     function __syscall(nr, a0, a1, a2, a3, a4, a5) {
         const a = [a0 | 0, a1 | 0, a2 | 0, a3 | 0, a4 | 0, a5 | 0];
-        const u = () => new Uint8Array(inst.exports.memory.buffer);
-        const v = () => new DataView(inst.exports.memory.buffer);
+        const u = () => ({
+            length: memory.byteLength,
+            subarray: (start, end) => memory.read(start, end - start),
+            set: (bytes, start) => memory.write(start, bytes),
+            fill: (value, start, end) => memory.write(start, new Uint8Array(end - start).fill(value)),
+        });
+        const v = () => ({
+            getUint32: (at) => {
+                const bytes = memory.read(at, 4);
+                return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0, true);
+            },
+            setUint16: (at, value) => putScalar(at, 2, "setUint16", value),
+            setUint32: (at, value) => putScalar(at, 4, "setUint32", value),
+            setBigUint64: (at, value) => putScalar(at, 8, "setBigUint64", value),
+        });
         switch (nr) {
         case 66: { // writev(fd, iov, iovcnt)
             const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
@@ -466,7 +478,7 @@ export async function runLinux(e, caller) {
             const uu = u(), start = a[1] >>> 0;
             if (!start || start >= uu.length) return -14;
             let end = start;
-            while (end < uu.length && uu[end] !== 0) end++;
+            while (end < uu.length && memory.read(end, 1)[0] !== 0) end++;
             if (end === uu.length) return -14;
             const raw = new TextDecoder().decode(uu.subarray(start, end));
             const name = admittedName(raw);
@@ -540,7 +552,7 @@ export async function runLinux(e, caller) {
             const uu = u(), buf = a[4] >>> 0, start = a[1] >>> 0;
             if (!buf || buf > uu.length || 256 > uu.length - buf || !start || start >= uu.length) return -14;
             let end = start;
-            while (end < uu.length && uu[end] !== 0) end++;
+            while (end < uu.length && memory.read(end, 1)[0] !== 0) end++;
             if (end === uu.length) return -14;
             const raw = new TextDecoder().decode(uu.subarray(start, end));
             if (!raw) return -2;
@@ -571,7 +583,7 @@ export async function runLinux(e, caller) {
             const uu = u(), start = a[1] >>> 0;
             if (start >= uu.length) return -14;
             let end = start;
-            while (end < uu.length && uu[end] !== 0) end++;
+            while (end < uu.length && memory.read(end, 1)[0] !== 0) end++;
             if (end === uu.length) return -14;
             const raw = new TextDecoder().decode(uu.subarray(start, end));
             if (!raw) return -2;
@@ -600,18 +612,8 @@ export async function runLinux(e, caller) {
             // Nonfixed addresses are ignored hints. fd=-1 and offset=0 are
             // shim restrictions; ENOSYS here is not native Linux policy.
             if (a[2] !== 3 || flags !== 0x22 || a[4] !== -1 || a[5] !== 0) return -38;
-            const size = Math.ceil(len / 4096) * 4096;
-            if (size >= 2 ** 32 || arenaNext > memoryBytes || size > memoryBytes - arenaNext) return -12;
-            const end = arenaNext + size, m = inst.exports.memory;
-            const pages = Math.max(0, Math.ceil((end - m.buffer.byteLength) / 65536));
-            if (pages) {
-                try { m.grow(pages); }
-                catch (err) { if (err instanceof RangeError) return -12; throw err; }
-            }
-            const base = arenaNext;
-            new Uint8Array(m.buffer).fill(0, base, end);
-            arenaNext = end;
-            return base;
+            // VM integrations must provide an explicit arena policy; no raw view.
+            return arena ? arena(len) : -38;
         }
         case 215: { // No inaccessible holes can be enforced in linear memory.
             const start = a[0] >>> 0, len = a[1] >>> 0;
@@ -632,6 +634,45 @@ export async function runLinux(e, caller) {
         }
     }
 
+    return {
+        syscall: __syscall,
+        finish() {
+            for (const fd of [1, 2]) { try { streams[fd].flush(); } catch (_) {} }
+            for (const h of openFiles.values()) { try { h.close(); } catch (_) {} }
+            caller.call("exit", { code: exitCode });
+        },
+    };
+}
+
+export async function runLinux(e, caller) {
+    const wasm = extractWasm(e.data.bin);
+    const argv = e.data.args, envp = e.data.env;
+    let inst, arenaNext;
+    const memoryBytes = 16 * 1024 * 1024;
+    const checkedMemory = {
+        get byteLength() { return inst.exports.memory.buffer.byteLength; },
+        read(at, size) {
+            return new Uint8Array(inst.exports.memory.buffer, at, size).slice();
+        },
+        write(at, bytes) {
+            new Uint8Array(inst.exports.memory.buffer, at, bytes.length).set(bytes);
+        },
+    };
+    const personality = createLinuxPersonality(e, caller, checkedMemory, {arena(len) {
+        const size = Math.ceil(len / 4096) * 4096;
+        if (size >= 2 ** 32 || arenaNext > memoryBytes || size > memoryBytes - arenaNext) return -12;
+        const end = arenaNext + size, m = inst.exports.memory;
+        const pages = Math.max(0, Math.ceil((end - m.buffer.byteLength) / 65536));
+        if (pages) {
+            try { m.grow(pages); }
+            catch (err) { if (err instanceof RangeError) return -12; throw err; }
+        }
+        const base = arenaNext;
+        checkedMemory.write(base, new Uint8Array(size));
+        arenaNext = end;
+        return base;
+    }});
+    const syscall = personality.syscall;
     const mod = await WebAssembly.compile(wasm);
     inst = await WebAssembly.instantiate(mod, { "ferrule.linux.syscall": { syscall } });
     const m = inst.exports.memory;
@@ -644,7 +685,5 @@ export async function runLinux(e, caller) {
     } catch (err) {
         if (!(err && err.kind === "exit")) throw err;
     }
-    for (const fd of [1, 2]) { try { streams[fd].flush(); } catch (_) {} }
-    for (const h of openFiles.values()) { try { h.close(); } catch (_) {} }
-    caller.call("exit", { code: exitCode });
+    personality.finish();
 }
