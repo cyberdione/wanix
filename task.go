@@ -42,30 +42,31 @@ type TaskDriver interface {
 }
 
 type Task struct {
-	driver            TaskDriver
-	diagnosticProfile string
-	parent            *Task
-	ns                *vfs.NS
-	id                int
-	alias             string
-	kind              string
-	cmd               string
-	args              []string
-	env               []string
-	exit              string
-	dir               string
-	fds               map[int]*openFile
-	closedFDs         map[int]bool
-	fdIdx             int
-	cleanup           []func()
-	exited            bool
-	cancel            context.CancelFunc
-	fsys              *TaskFS
-	worker            any
-	export            fs.FS
-	w                 fs.FS
-	mu                sync.Mutex
-	exitMu            sync.RWMutex // status snapshots must not reenter mu through FD routing
+	driver                TaskDriver
+	diagnosticProfile     string
+	memoryControlScenario string
+	parent                *Task
+	ns                    *vfs.NS
+	id                    int
+	alias                 string
+	kind                  string
+	cmd                   string
+	args                  []string
+	env                   []string
+	exit                  string
+	dir                   string
+	fds                   map[int]*openFile
+	closedFDs             map[int]bool
+	fdIdx                 int
+	cleanup               []func()
+	exited                bool
+	cancel                context.CancelFunc
+	fsys                  *TaskFS
+	worker                any
+	export                fs.FS
+	w                     fs.FS
+	mu                    sync.Mutex
+	exitMu                sync.RWMutex // status snapshots must not reenter mu through FD routing
 }
 
 func Export(t *Task, export fs.FS) {
@@ -471,7 +472,29 @@ const linuxCapture2Selector = "linux-capture2-diagnostic"
 const Capture2DiagnosticProfile = "capture-2-authored-layout-v1"
 
 // DiagnosticProfile is fixed before publication and is never inherited.
-func (t *Task) DiagnosticProfile() string { return t.diagnosticProfile }
+func (t *Task) DiagnosticProfile() string     { return t.diagnosticProfile }
+func (t *Task) MemoryControlScenario() string { return t.memoryControlScenario }
+
+const MemoryControlProfile = "memory-controls-v1"
+
+var memoryControlScenarios = [...]string{"rw", "none", "ro", "cross-none", "host-copy", "rw-store-readback", "none-load", "mprotect-hole-prefix"}
+
+func ValidMemoryControlScenario(s string) bool {
+	for _, name := range memoryControlScenarios {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+func memoryControlSelector(name string) string {
+	for _, scenario := range memoryControlScenarios {
+		if name == "linux-memory-controls-"+scenario {
+			return scenario
+		}
+	}
+	return ""
+}
 
 type TaskScratchPolicy uint8
 
@@ -486,7 +509,7 @@ type TaskAllocOptions struct {
 }
 
 func (d *TaskFS) Register(kind string, driver TaskDriver) {
-	if kind == linuxScratchSelector || kind == linuxCapture2Selector {
+	if kind == linuxScratchSelector || kind == linuxCapture2Selector || memoryControlSelector(kind) != "" {
 		panic("wanix: linux-scratch is a reserved allocation selector")
 	}
 	d.mu.Lock()
@@ -501,6 +524,12 @@ func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
 // AllocWithOptions chooses owned storage before publishing the task. The policy
 // is not inherited and is never changed by executable detection, Start or Exit.
 func (d *TaskFS) AllocWithOptions(kind string, parent *Task, opts TaskAllocOptions) (*Task, error) {
+	return d.allocDerived(kind, parent, opts, "")
+}
+func (d *TaskFS) allocDerived(kind string, parent *Task, opts TaskAllocOptions, scenario string) (*Task, error) {
+	if scenario != "" && (!ValidMemoryControlScenario(scenario) || kind != "linux" || opts.Scratch != LinuxRegularScratch || opts.DiagnosticProfile != "") {
+		return nil, fs.ErrInvalid
+	}
 	if opts.DiagnosticProfile != "" && (opts.DiagnosticProfile != Capture2DiagnosticProfile || kind != "linux" || opts.Scratch != LinuxRegularScratch) {
 		return nil, fs.ErrInvalid
 	}
@@ -523,15 +552,16 @@ func (d *TaskFS) AllocWithOptions(kind string, parent *Task, opts TaskAllocOptio
 	rid := strconv.Itoa(d.nextID)
 
 	p := &Task{
-		fsys:              d,
-		driver:            driver,
-		diagnosticProfile: opts.DiagnosticProfile,
-		id:                d.nextID,
-		kind:              kind,
-		fds:               make(map[int]*openFile),
-		closedFDs:         make(map[int]bool),
-		fdIdx:             3,
-		w:                 writable,
+		fsys:                  d,
+		driver:                driver,
+		diagnosticProfile:     opts.DiagnosticProfile,
+		memoryControlScenario: scenario,
+		id:                    d.nextID,
+		kind:                  kind,
+		fds:                   make(map[int]*openFile),
+		closedFDs:             make(map[int]bool),
+		fdIdx:                 3,
+		w:                     writable,
 	}
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), TaskContextKey, p))
 	p.cancel = cancel
@@ -556,6 +586,9 @@ func (d *TaskFS) vfsNS(ctx context.Context) (*vfs.NS, error) {
 				}
 				if _, ok := d.types["linux"]; ok {
 					nodes = append(nodes, fskit.Entry(linuxScratchSelector, 0555), fskit.Entry(linuxCapture2Selector, 0555))
+					for _, scenario := range memoryControlScenarios {
+						nodes = append(nodes, fskit.Entry("linux-memory-controls-"+scenario, 0555))
+					}
 				}
 				d.mu.Unlock()
 				return fskit.DirFile(fskit.Entry("new", 0555), nodes...), nil
@@ -579,7 +612,12 @@ func (d *TaskFS) vfsNS(ctx context.Context) (*vfs.NS, error) {
 							opts.DiagnosticProfile = Capture2DiagnosticProfile
 						}
 					}
-					p, err := d.AllocWithOptions(kind, t, opts)
+					scenario := memoryControlSelector(name)
+					if scenario != "" {
+						kind = "linux"
+						opts.Scratch = LinuxRegularScratch
+					}
+					p, err := d.allocDerived(kind, t, opts, scenario)
 					if err != nil {
 						return err
 					}
