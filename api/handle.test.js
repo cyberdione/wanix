@@ -219,7 +219,7 @@ test("optional existing size ceiling is exact over real CBOR while legacy remain
         }}});
         assert.deepEqual(await h.openFileResult("x", "write", {truncate:true, maxExistingSize}),
             {OK:false, Error:{Code:"EOVERFLOW"}});
-        assert.equal(sent.MaxExistingSize, maxExistingSize);
+        assert.equal(sent.MaxExistingSize, BigInt(maxExistingSize));
         assert.equal(Object.keys(sent).length, 7);
     }
     const calls=[], h=resultHandle({OK:true,Value:0}, calls);

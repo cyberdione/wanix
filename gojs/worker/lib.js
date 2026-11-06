@@ -4100,7 +4100,7 @@ var WanixHandle = class {
       Exclusive: exclusive,
       Truncate: truncate,
       Perm: perm,
-      ...maxExistingSize === void 0 ? {} : { MaxExistingSize: maxExistingSize }
+      ...maxExistingSize === void 0 ? {} : { MaxExistingSize: BigInt(maxExistingSize) }
     });
     return validateResult(response?.value, validFD);
   }

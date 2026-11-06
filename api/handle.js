@@ -178,7 +178,7 @@ export class WanixHandle {
         }
         const response = await this.peer.call("OpenFileResult", {
             Path: name, Access: access, Create: create, Exclusive: exclusive, Truncate: truncate, Perm: perm,
-            ...(maxExistingSize === undefined ? {} : {MaxExistingSize: maxExistingSize}),
+            ...(maxExistingSize === undefined ? {} : {MaxExistingSize: BigInt(maxExistingSize)}),
         });
         // A malformed reply does not establish ownership of any descriptor.
         // In particular, never close a number guessed from an invalid envelope.
