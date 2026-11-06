@@ -5,21 +5,60 @@ package main
 
 import (
 	"fmt"
+ "flag"
+ "path/filepath"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/evanw/esbuild/pkg/api"
+ "tractor.dev/wanix/internal/cbornoeval"
 )
 
 func main() {
+    wrapperOnly := flag.Bool("wrapper-only", false, "build only the wrapper")
+    wrapperOutput := flag.String("wrapper-output", "", "exclusive wrapper output outside checkout")
+    flag.Parse()
+    if !*wrapperOnly && *wrapperOutput != "" { panic("wrapper-output requires wrapper-only") }
+
 	opts := api.BuildOptions{
 		Bundle:   true,
 		Write:    true,
 		Format:   api.FormatESModule,
 		External: []string{"util"},
 		LogLevel: api.LogLevelInfo,
+        Plugins: []api.Plugin{cbornoeval.Plugin()},
 	}
+
+	wanixOpts := opts
+	wanixOpts.EntryPoints = []string{"index.ts"}
+	wanixOpts.Outfile = "dist/wanix.js"
+	wanixOpts.Loader = map[string]api.Loader{
+		".go.js":     api.LoaderText,
+		".tinygo.js": api.LoaderText,
+		".css":       api.LoaderText,
+	}
+    if *wrapperOnly {
+        root, err := os.Getwd()
+        if err != nil { panic(err) }
+        out := *wrapperOutput
+        if !filepath.IsAbs(out) { panic("wrapper output must be absolute") }
+        rel, err := filepath.Rel(root, out)
+        if err != nil { panic(err) }
+        if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) { panic("wrapper output must be outside checkout") }
+        wanixOpts.Write = false
+        wanixOpts.Outfile = out
+        result := api.Build(wanixOpts)
+        if len(result.Errors) != 0 { os.Exit(1) }
+        if len(result.OutputFiles) != 1 || result.OutputFiles[0].Path != out { panic("expected exactly one wrapper output") }
+        contents := result.OutputFiles[0].Contents
+        if len(contents) > 4*1024*1024 { panic("wrapper exceeds 4 MiB cap") }
+        f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+        if err != nil { panic(err) }
+        if _, err := f.Write(contents); err != nil { f.Close(); panic(err) }
+        if err := f.Close(); err != nil { panic(err) }
+        return
+    }
 
 	var wg sync.WaitGroup
 
@@ -32,14 +71,6 @@ func main() {
 		build(handleOpts)
 	}()
 
-	wanixOpts := opts
-	wanixOpts.EntryPoints = []string{"index.ts"}
-	wanixOpts.Outfile = "dist/wanix.js"
-	wanixOpts.Loader = map[string]api.Loader{
-		".go.js":     api.LoaderText,
-		".tinygo.js": api.LoaderText,
-		".css":       api.LoaderText,
-	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -89,38 +120,7 @@ func main() {
 
 	wg.Wait()
 
-	for _, path := range []string{"gojs/worker/lib.js", "wasi/worker/lib.js", "linux/worker/lib.js"} {
-		if err := patchCSPDecoder(path); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
 	fmt.Println("js build complete")
-}
-
-func patchCSPDecoder(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	source := string(data)
-	start := strings.Index(source, "if (this.slowReads++ >= ")
-	if start < 0 {
-		if strings.Contains(source, "new Function(\"r\"") {
-			return fmt.Errorf("unrecognized dynamic CBOR compiler in %s", path)
-		}
-		return nil
-	}
-	end := strings.Index(source[start:], "    let object = {};")
-	if end < 0 {
-		return fmt.Errorf("CBOR object fallback not found in %s", path)
-	}
-	end += start
-	patched := source[:start] + source[end:]
-	if strings.Contains(patched, "new Function(\"r\"") {
-		return fmt.Errorf("dynamic CBOR compilation remains in %s", path)
-	}
-	return os.WriteFile(path, []byte(patched), 0644)
 }
 
 func build(opts api.BuildOptions) {
