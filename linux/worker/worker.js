@@ -181,9 +181,9 @@ function buildInitialStack(memory, base, capacity, argv, envp) {
     return base;
 }
 
-async function runLinux(e, caller) {
+export async function runLinux(e, caller) {
     const tid = e.data.tid;
-    const stdinText = e.data.stdinText ?? null;
+    const stdinBytes = e.data.stdinText == null ? null : new TextEncoder().encode(e.data.stdinText);
     let stdinPos = 0;
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
@@ -246,7 +246,7 @@ async function runLinux(e, caller) {
                 if (base > uu.length || len > uu.length - base) return -14;
                 vectors.push([base, len]);
             }
-            if (!(streams[fd] ?? openFiles.get(fd)) && !(fd === 0 && stdinText !== null)) return -9;
+            if (!(streams[fd] ?? openFiles.get(fd)) && !(fd === 0 && stdinBytes !== null)) return -9;
             let total = 0;
             for (const [base, len] of vectors) {
                 if (!len) continue;
@@ -286,11 +286,11 @@ async function runLinux(e, caller) {
         case 63: { // read(fd, buf, count) — task-provided stdin text or streams
             const fd = a[0], buf = a[1] >>> 0, count = a[2] >>> 0, uu = u();
             if (buf > uu.length || count > uu.length - buf) return -14;
-            if (fd === 0 && stdinText !== null) {
-                const chunk = stdinText.slice(stdinPos, stdinPos + count);
+            if (fd === 0 && stdinBytes !== null) {
+                const chunk = stdinBytes.subarray(stdinPos, stdinPos + count);
                 stdinPos += chunk.length;
-                if (chunk) uu.set(new TextEncoder().encode(chunk), buf);
-                return chunk.length; // 0 at EOF
+                uu.set(chunk, buf);
+                return chunk.length; // bytes read; 0 at EOF or for count == 0
             }
             const h = streams[fd] ?? openFiles.get(fd);
             if (!h) return -9;
