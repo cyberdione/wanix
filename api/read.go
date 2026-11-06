@@ -92,7 +92,13 @@ func (s *syscaller) readAt(r rpc.Responder, c *rpc.Call) {
 	} else {
 		n, err = f.Read(buf)
 	}
-	if err != nil && err != io.EOF {
+	if n < 0 || n > len(buf) {
+		r.Return(fmt.Errorf("ReadAt returned invalid count %d for buffer length %d", n, len(buf)))
+		return
+	}
+	// The RPC returns bytes or an error, not both. Deliver partial data even
+	// when the backend also reports an error; no deferred error is retained.
+	if n == 0 && err != nil && err != io.EOF {
 		r.Return(err)
 		return
 	}

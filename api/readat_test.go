@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -152,5 +153,62 @@ func TestReadAtStreamTaskCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("read did not cancel")
+	}
+}
+
+// readResultFile can also be wrapped as fs.File to hide ReaderAt and exercise
+// the sequential fallback without changing the ordinary Read RPC semantics.
+type readResultFile struct {
+	n   int
+	err error
+}
+
+func (*readResultFile) Close() error               { return nil }
+func (*readResultFile) Stat() (fs.FileInfo, error) { return fskit.Entry("file", 0600), nil }
+func (f *readResultFile) Read(p []byte) (int, error) {
+	copy(p, "abc")
+	return f.n, f.err
+}
+func (f *readResultFile) ReadAt(p []byte, _ int64) (int, error) { return f.Read(p) }
+
+func TestReadAtPartialErrorAndInvalidCounts(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		for _, tc := range []struct {
+			name    string
+			n       int
+			err     error
+			want    string
+			wantErr string
+		}{
+			{"partial-error", 2, io.ErrUnexpectedEOF, "ab", ""},
+			{"full-error", 3, io.ErrUnexpectedEOF, "abc", ""},
+			{"zero-error", 0, io.ErrUnexpectedEOF, "", "unexpected EOF"},
+			{"zero-eof", 0, io.EOF, "", ""},
+			{"negative", -1, io.ErrUnexpectedEOF, "", "invalid count"},
+			{"oversized", 4, nil, "", "invalid count"},
+		} {
+			t.Run(fmt.Sprintf("%s/fallback=%t", tc.name, fallback), func(t *testing.T) {
+				client, task := startTestServerWithTask(t)
+				var file fs.File = &readResultFile{tc.n, tc.err}
+				if fallback {
+					file = struct{ fs.File }{file}
+				}
+				fd := task.OpenFD(file, "file")
+				var got []byte
+				_, err := client.Call(context.Background(), "ReadAt", []any{uint64(fd), uint64(3), uint64(0)}, &got)
+				if tc.wantErr != "" {
+					if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+						t.Fatalf("expected %q, got %v", tc.wantErr, err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != tc.want {
+					t.Fatalf("got %q, want %q", got, tc.want)
+				}
+			})
+		}
 	}
 }
