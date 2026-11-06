@@ -98,6 +98,27 @@ export function messageHandler(fs, call, tid) {
                 call.respond(stat?.Size ?? 0);
                 break;
             }
+            case "path_stat": {
+                // Use a typed envelope: CallBuffer throws for __wanix_error.
+                try {
+                    const prefix = `${TASKNS}/${tid}/w/`;
+                    const name = typeof e.data.path === "string" && e.data.path.startsWith(prefix)
+                        ? e.data.path.slice(prefix.length) : "";
+                    if (!/^(?:out\.txt|tmpfile_[^/]+)$/.test(name)) {
+                        call.respond({ok: false, errno: 13});
+                        break;
+                    }
+                    const stat = e.data.nofollow ? await fs.lstat(e.data.path) : await fs.stat(e.data.path);
+                    call.respond({ok: true, stat});
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    const errno = /file does not exist|no such file/i.test(message) ? 2
+                        : /permission denied/i.test(message) ? 13
+                        : /not a directory/i.test(message) ? 20 : 5;
+                    call.respond({ok: false, errno});
+                }
+                break;
+            }
             case "path_remove": {
                 // The RPC exposes generic Remove, not atomic unlink. Admit only
                 // regular files; never use RemoveAll or follow a symlink here.
@@ -343,21 +364,37 @@ export async function runLinux(e, caller) {
             vv.setBigUint64(res, BigInt(pos), true);
             return 0;
         }
-        case 291: { // statx(dirfd, path, flags, mask, buf) — minimal regular-file
-            const uu = u(), vv = v(), buf = a[3] >>> 0, pathPtr = (a[1] >>> 0);
-            let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
-            const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
-            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
-            if (p !== "out.txt" && !scratch) return -13;
-            if (buf + 256 > uu.length) return -14;
+        case 291: { // statx: task-local regular files, TYPE and SIZE only
+            const flags = a[2] >>> 0, mask = a[3] >>> 0;
+            if ((flags & ~0x7900) || (flags & 0x6000) === 0x6000 || (mask & 0x80000000)) return -22;
+            // Empty-path fd lookup and forced/cache-only sync are not implemented.
+            if (flags & 0x7000) return -38;
+            const uu = u(), buf = a[4] >>> 0, start = a[1] >>> 0;
+            if (!buf || buf > uu.length || 256 > uu.length - buf || !start || start >= uu.length) return -14;
+            let end = start;
+            while (end < uu.length && uu[end] !== 0) end++;
+            if (end === uu.length) return -14;
+            const raw = new TextDecoder().decode(uu.subarray(start, end));
+            if (!raw) return -2;
+            if (!raw.startsWith("/") && a[0] !== -100) {
+                return (streams[a[0]] || openFiles.has(a[0])) ? -20 : -9;
+            }
+            const path = raw.replace(/^\/+/, "");
+            if (!/^(?:out\.txt|(?:tmp\/)?tmpfile_[^/]+)$/.test(path)) return -13;
+            const name = path.startsWith("tmp/") ? path.slice(4) : path;
+            const result = caller.call("path_stat", {path: `${TASKNS}/${tid}/w/${name}`, nofollow: !!(flags & 0x100)});
+            if (!result || result.ok !== true) return -(result?.errno || 5);
+            const stat = result.stat;
+            if (!stat || !Number.isInteger(stat.Mode) || typeof stat.IsDir !== "boolean") return -5;
+            if (stat.IsDir || (stat.Mode & 0xf000) !== 0x8000) return -38;
+            if (typeof stat.Size !== "number" || !Number.isFinite(stat.Size) || stat.Size < 0 || !Number.isInteger(stat.Size)) return -5;
+            // JSON RPC supplies numbers, so larger sizes cannot be trusted losslessly.
+            if (!Number.isSafeInteger(stat.Size)) return -75;
             uu.fill(0, buf, buf + 256);
-            vv.setUint32(buf + 0, 0x7ff, true);
-            vv.setUint32(buf + 4, 4096, true);
-            vv.setUint32(buf + 12, 1, true);
-            vv.setUint32(buf + 24, 33188, true);
-            vv.setBigUint64(buf + 28, 42n, true);
-            const size = Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
-            vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
+            const vv = v();
+            vv.setUint32(buf, 0x201, true);
+            vv.setUint16(buf + 28, stat.Mode & 0xf000, true);
+            vv.setBigUint64(buf + 40, BigInt(stat.Size), true);
             return 0;
         }
         case 35: { // asm-generic unlinkat; narrowly admitted task-local regular files
