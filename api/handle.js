@@ -1,5 +1,39 @@
 import * as duplex from "@progrium/duplex";
 
+export class FilesystemResultProtocolError extends Error {
+    constructor() {
+        super("invalid filesystem result envelope");
+        this.name = "FilesystemResultProtocolError";
+    }
+}
+
+const filesystemCodes = new Set([
+    "ENOENT", "EACCES", "EPERM", "EEXIST", "EINVAL", "ENOTDIR",
+    "EISDIR", "ELOOP", "ENAMETOOLONG", "EIO",
+]);
+const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
+const owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+const validFD = value => Number.isSafeInteger(value) && value >= 0;
+
+function validStat(value) {
+    return record(value) && ["Size", "Mode", "IsDir", "ModTime"].every(key => owns(value, key)) &&
+        Number.isSafeInteger(value.Size) && Number.isSafeInteger(value.Mode) &&
+        value.Mode >= 0 && value.Mode <= 0xffffffff && typeof value.IsDir === "boolean" &&
+        typeof value.ModTime === "number" && Number.isFinite(value.ModTime);
+}
+
+function validateResult(result, validValue) {
+    if (!record(result) || typeof result.OK !== "boolean") throw new FilesystemResultProtocolError();
+    if (result.OK) {
+        if (!owns(result, "Value") || owns(result, "Error") || !validValue(result.Value)) {
+            throw new FilesystemResultProtocolError();
+        }
+    } else if (owns(result, "Value") || !record(result.Error) || !filesystemCodes.has(result.Error.Code)) {
+        throw new FilesystemResultProtocolError();
+    }
+    return result;
+}
+
 export class WanixHandle {
     constructor(port) {
         const sess = new duplex.Session(new duplex.PortConn(port));
@@ -108,6 +142,29 @@ export class WanixHandle {
     async open(name) {
         this.logger(`open ${name}`);
         return (await this.peer.call("Open", [name])).value;
+    }
+
+    async openResult(name) {
+        const result = (await this.peer.call("OpenResult", [name])).value;
+        try {
+            return validateResult(result, validFD);
+        } catch (error) {
+            // A recognizable allocation rejected before handoff still needs an owner.
+            // Unrecognizable numbers remain task-owned until teardown.
+            if (record(result) && result.OK === true && owns(result, "Value") && validFD(result.Value)) {
+                try { await this.close(result.Value); }
+                catch (cleanupError) { error.cleanupError = cleanupError; }
+            }
+            throw error;
+        }
+    }
+
+    async statResult(name) {
+        return validateResult((await this.peer.call("StatResult", [name])).value, validStat);
+    }
+
+    async lstatResult(name) {
+        return validateResult((await this.peer.call("LstatResult", [name])).value, validStat);
     }
 
     async openFile(name, flags, mode) {
