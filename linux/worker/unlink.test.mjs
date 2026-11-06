@@ -49,11 +49,11 @@ test('outer bridge uses lstat and Remove, rejects directories and symlinks witho
     const removed = [], responses = [];
     const prefix = '#task/test/w/';
     const handler = messageHandler({
-        async lstat(path) {
+        async lstatResult(path) {
             path = path.slice(prefix.length).replace(/^tmpfile_/, '');
-            if (path === 'missing') throw new Error('open missing: file does not exist');
-            if (path === 'denied') throw new Error('permission denied');
-            return {Mode: path === 'dir' ? 0x4000 : path === 'link' ? 0xa000 : 0x8000, IsDir: path === 'dir'};
+            if (path === 'missing') return {OK:false,Error:{Code:'ENOENT'}};
+            if (path === 'denied') return {OK:false,Error:{Code:'EACCES'}};
+            return {OK:true,Value:{Mode: path === 'dir' ? 0x4000 : path === 'link' ? 0xa000 : 0x8000, IsDir: path === 'dir'}};
         },
         async remove(path) { removed.push(path); },
     }, {respond(value) { responses.push(value); }}, 'test');

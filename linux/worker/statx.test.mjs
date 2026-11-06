@@ -68,8 +68,8 @@ test('path_stat calls actual backend stat/lstat and preserves typed failures', a
     const responses = [], calls = [];
     const stat = {Size: 123, Mode: 0x8000, IsDir: false};
     const handler = messageHandler({
-        async stat(path) { calls.push(['stat', path]); return stat; },
-        async lstat(path) { calls.push(['lstat', path]); throw Error('no such file'); },
+        async statResult(path) { calls.push(['stat', path]); return {OK:true, Value:stat}; },
+        async lstatResult(path) { calls.push(['lstat', path]); return {OK:false,Error:{Code:'ENOENT'}}; },
     }, {respond(value) {responses.push(value);}}, 'test');
     await handler({data: {method: 'path_stat', path: '#task/test/w/out.txt'}});
     await handler({data: {method: 'path_stat', path: '#task/test/w/tmpfile_x', nofollow: true}});

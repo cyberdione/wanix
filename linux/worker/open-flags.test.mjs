@@ -56,8 +56,8 @@ test('actual dispatch preserves existing bytes, rejects features before calls, a
 test('existing-open broker preserves typed errno and never creates or truncates', async () => {
     const replies=[], calls=[];
     let error;
-    const fs={async lstat(path) { calls.push('lstat'); if(error) throw error; return {Mode:0x8000,IsDir:false}; },
-        async open() { calls.push('open'); return 8; }};
+    const fs={async lstatResult(path) { calls.push('lstat'); if(error) throw error; return {OK:true,Value:{Mode:0x8000,IsDir:false}}; },
+        async openResult() { calls.push('open'); return {OK:true, Value:8}; }};
     const handler=messageHandler(fs,{respond(v){replies.push(v);}},'test');
     const request=path=>handler({data:{method:'path_open_existing',path}});
     await request('#task/other/w/out.txt'); assert.deepEqual(replies.pop(),{ok:false,errno:13});

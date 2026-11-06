@@ -8362,6 +8362,41 @@ var Conn = class {
 };
 
 // api/handle.js
+var FilesystemResultProtocolError = class extends Error {
+  constructor() {
+    super("invalid filesystem result envelope");
+    this.name = "FilesystemResultProtocolError";
+  }
+};
+var filesystemCodes = /* @__PURE__ */ new Set([
+  "ENOENT",
+  "EACCES",
+  "EPERM",
+  "EEXIST",
+  "EINVAL",
+  "ENOTDIR",
+  "EISDIR",
+  "ELOOP",
+  "ENAMETOOLONG",
+  "EIO"
+]);
+var record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+var validFD = (value) => Number.isSafeInteger(value) && value >= 0;
+function validStat(value) {
+  return record(value) && ["Size", "Mode", "IsDir", "ModTime"].every((key) => owns(value, key)) && Number.isSafeInteger(value.Size) && Number.isSafeInteger(value.Mode) && value.Mode >= 0 && value.Mode <= 4294967295 && typeof value.IsDir === "boolean" && typeof value.ModTime === "number" && Number.isFinite(value.ModTime);
+}
+function validateResult(result, validValue) {
+  if (!record(result) || typeof result.OK !== "boolean") throw new FilesystemResultProtocolError();
+  if (result.OK) {
+    if (!owns(result, "Value") || owns(result, "Error") || !validValue(result.Value)) {
+      throw new FilesystemResultProtocolError();
+    }
+  } else if (owns(result, "Value") || !record(result.Error) || !filesystemCodes.has(result.Error.Code)) {
+    throw new FilesystemResultProtocolError();
+  }
+  return result;
+}
 var WanixHandle2 = class {
   constructor(port) {
     const sess = new Session(new Conn(port));
@@ -8451,6 +8486,27 @@ var WanixHandle2 = class {
   async open(name) {
     this.logger(`open ${name}`);
     return (await this.peer.call("Open", [name])).value;
+  }
+  async openResult(name) {
+    const result = (await this.peer.call("OpenResult", [name])).value;
+    try {
+      return validateResult(result, validFD);
+    } catch (error) {
+      if (record(result) && result.OK === true && owns(result, "Value") && validFD(result.Value)) {
+        try {
+          await this.close(result.Value);
+        } catch (cleanupError) {
+          error.cleanupError = cleanupError;
+        }
+      }
+      throw error;
+    }
+  }
+  async statResult(name) {
+    return validateResult((await this.peer.call("StatResult", [name])).value, validStat);
+  }
+  async lstatResult(name) {
+    return validateResult((await this.peer.call("LstatResult", [name])).value, validStat);
   }
   async openFile(name, flags, mode) {
     this.logger(`openFile ${name} ${flags} ${mode}`);
