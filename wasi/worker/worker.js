@@ -125,14 +125,19 @@ function messageHandler(fs, call, tid) {
             call.respond(true);
             break;
 
-        case "fd_read":
-            // const at = e.data.at;
+        case "fd_read": {
             // The CallBuffer response slot is bounded; asking for more than it
             // can carry would silently truncate the read and drop the excess
             // stream bytes (the kernel consumes them regardless).
-            const data = await fs.read(e.data.fd, Math.min(e.data.count, call.maxData)/*, at*/);
+            const count = Math.min(e.data.count, call.maxData);
+            // ReadAt handles seekable files and keeps context-aware sequential
+            // reads for streams, including task cancellation.
+            const data = e.data.at === undefined
+                ? await fs.read(e.data.fd, count)
+                : await fs.readAt(e.data.fd, count, e.data.at);
             call.respond(data);
             break;
+        }
 
         case "fd_write":
             // WASI supplies the file position for every write.  Use it rather

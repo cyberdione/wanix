@@ -79,6 +79,26 @@ responses.length = 0;
 await handler3({ data: { method: "not_supported" } });
 assert.equal(JSON.stringify(responses), JSON.stringify([{ __wanix_error: "unsupported method: not_supported" }]));
 
+// Reads forward explicit positions (including zero) and cap both API paths
+// before consuming any bytes from the backend.
+responses.length = 0;
+const readCalls = [];
+const readFs = {
+  async read(fd, count) { readCalls.push(["read", fd, count]); return new Uint8Array([1]); },
+  async readAt(fd, count, at) { readCalls.push(["readAt", fd, count, at]); return new Uint8Array([2]); },
+};
+const readHandler = handlerFactory(readFs, { maxData: 8, respond(value) { responses.push(value); } }, "t");
+await readHandler({ data: { method: "fd_read", fd: 4, count: 32, at: 0 } });
+await readHandler({ data: { method: "fd_read", fd: 4, count: 3, at: 17 } });
+await readHandler({ data: { method: "fd_read", fd: 0, count: 32 } });
+assert.deepEqual(readCalls, [["readAt", 4, 8, 0], ["readAt", 4, 3, 17], ["read", 0, 8]]);
+assert.deepEqual(responses.map(value => Array.from(value)), [[2], [2], [1]]);
+responses.length = 0;
+const cancelledReadHandler = handlerFactory({ async readAt() { throw new Error("context canceled"); } },
+  { maxData: 8, respond(value) { responses.push(value); } }, "t");
+await cancelledReadHandler({ data: { method: "fd_read", fd: 0, count: 1, at: 0 } });
+assert.equal(JSON.stringify(responses), JSON.stringify([{ __wanix_error: "Error: context canceled" }]));
+
 const runWasi = context.__runWasi;
 assert.equal(typeof runWasi, "function");
 await runWasi({ data: { args: ["app.wasm"], env: [], buffer: new SharedArrayBuffer(16), bin: new ArrayBuffer(8), stdin: "#task/7/fd/0", stdout: "#task/7/fd/1", stderr: "#task/7/fd/2" } });
