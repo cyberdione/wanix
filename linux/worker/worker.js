@@ -83,7 +83,7 @@ async function initializeTaskWorker(e) {
     });
 }
 
-function messageHandler(fs, call, tid) {
+export function messageHandler(fs, call, tid) {
     return async (e) => {
         if (!e.data.method) return;
         try {
@@ -96,6 +96,37 @@ function messageHandler(fs, call, tid) {
             case "path_size": {
                 const stat = await fs.stat(e.data.path);
                 call.respond(stat?.Size ?? 0);
+                break;
+            }
+            case "path_remove": {
+                // The RPC exposes generic Remove, not atomic unlink. Admit only
+                // regular files; never use RemoveAll or follow a symlink here.
+                try {
+                    const prefix = `${TASKNS}/${tid}/w/`;
+                    const name = typeof e.data.path === "string" && e.data.path.startsWith(prefix)
+                        ? e.data.path.slice(prefix.length) : "";
+                    if ((!name.startsWith("tmpfile_") && name !== "out.txt") || name.includes("/")) {
+                        call.respond({ok: false, message: "permission denied", errno: 13});
+                        break;
+                    }
+                    const stat = await fs.lstat(e.data.path);
+                    if (stat.IsDir || (stat.Mode & 0xf000) === 0x4000) {
+                        call.respond({ok: false, message: "is a directory", errno: 21});
+                    } else if ((stat.Mode & 0xf000) !== 0x8000) {
+                        call.respond({ok: false, message: "unsupported file type", errno: 38});
+                    } else {
+                        await fs.remove(e.data.path);
+                        call.respond({ok: true});
+                    }
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    const errno = /file does not exist|no such file/i.test(message) ? 2
+                        : /permission denied/i.test(message) ? 13
+                        : /not a directory/i.test(message) ? 20
+                        : /directory not empty/i.test(message) ? 39
+                        : /operation not supported/i.test(message) ? 38 : 5;
+                    call.respond({ok: false, message: message, errno});
+                }
                 break;
             }
             case "path_touch":
@@ -329,12 +360,25 @@ export async function runLinux(e, caller) {
             vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
             return 0;
         }
-        case 35: // asm-generic unlinkat(dirfd, path, flags); no legacy unlink syscall
-            // No Linux unlink backend is wired through messageHandler. Do not
-            // report deletion or use path_touch/truncate as a substitute: open
-            // descriptions must survive removal of the directory entry.
-            // This includes flags == 0 and AT_REMOVEDIR (0x200).
-            return -38; // ENOSYS until removal and open-file lifetime are supported
+        case 35: { // asm-generic unlinkat; narrowly admitted task-local regular files
+            if (a[2] & ~0x200) return -22; // EINVAL: unknown flags
+            if (a[2] === 0x200) return -38; // AT_REMOVEDIR is not implemented
+            const uu = u(), start = a[1] >>> 0;
+            if (start >= uu.length) return -14;
+            let end = start;
+            while (end < uu.length && uu[end] !== 0) end++;
+            if (end === uu.length) return -14;
+            const raw = new TextDecoder().decode(uu.subarray(start, end));
+            if (!raw) return -2;
+            if (!raw.startsWith("/") && a[0] !== -100) return -9;
+            const p = raw.replace(/^\/+/, "");
+            if (p.split("/").some(seg => seg === ".." || seg === "." || seg === "")) return -13;
+            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
+            if (p !== "out.txt" && !scratch) return -13;
+            const target = `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}`;
+            const result = caller.call("path_remove", { path: target });
+            return result?.ok === true ? 0 : -(result?.errno || 5);
+        }
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
         case 214: return a[0] | 0;  // brk (diagnostic)
