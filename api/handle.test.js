@@ -57,3 +57,16 @@ test("writable close and abort close owned fd", async () => {
     await aborted.abort("stop");
     assert.deepEqual(closed, [44, 45]);
 });
+
+test("readAt forwards fd, count and offset", async () => {
+    const data = new Uint8Array([3, 4]);
+    const h = handle({
+        logger() {},
+        peer: { async call(method, args) {
+            assert.equal(method, "ReadAt");
+            assert.deepEqual(args, [7, 2, 11]);
+            return { value: data };
+        } },
+    });
+    assert.equal(await h.readAt(7, 2, 11), data);
+});

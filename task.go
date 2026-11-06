@@ -12,6 +12,7 @@ import (
 	"tractor.dev/toolkit-go/engine/cli"
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/fs/fskit"
+	"tractor.dev/wanix/fs/memfs"
 	"tractor.dev/wanix/fs/vfs"
 	"tractor.dev/wanix/misc"
 	"tractor.dev/wanix/misc/shlex"
@@ -60,6 +61,7 @@ type Task struct {
 	fsys      *TaskFS
 	worker    any
 	export    fs.FS
+	w         fs.FS
 	mu        sync.Mutex
 }
 
@@ -393,6 +395,7 @@ func (r *Task) taskMap() fskit.MapFS {
 			return fskit.Entry("binds", 0555, []byte(r.NS().String()+"\n")).Open(name)
 		}),
 		"ns": r.ns,
+		"w":  r.w,
 	}
 	if r.export != nil {
 		m["export"] = r.export
@@ -472,6 +475,7 @@ func (d *TaskFS) Alloc(kind string, parent *Task) (*Task, error) {
 		fds:       make(map[int]*openFile),
 		closedFDs: make(map[int]bool),
 		fdIdx:     3,
+		w:         memfs.New(),
 	}
 	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), TaskContextKey, p))
 	p.cancel = cancel

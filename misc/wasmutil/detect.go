@@ -40,6 +40,9 @@ func DetectType(fsys fs.FS, path string) (string, error) {
 			if bytes.Contains(buf, []byte("wasi_snapshot_preview1")) {
 				return "wasi", nil
 			}
+			if bytes.Contains(buf, []byte("ferrule.linux.syscall")) {
+				return "linux", nil
+			}
 			if bytes.Contains(buf, []byte("gojs")) || bytes.Contains(buf, []byte("\x03env")) {
 				return "gojs", nil
 			}
