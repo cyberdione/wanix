@@ -371,6 +371,54 @@ func TestQueueTaskNamespaceCancellationWakesReadAndReclaims(t *testing.T) {
 	}
 }
 
+func TestWMOutputQueueHostReaderAndWriter(t *testing.T) {
+	a := &QueueAllocator{MaxBytes: 8, MaxQueues: 1}
+	ns := vfs.New(context.Background())
+	if err := ns.Bind(a, ".", "#wmoutput"); err != nil {
+		t.Fatal(err)
+	}
+	nf, err := ns.Open("#wmoutput/new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 40)
+	n, err := nf.Read(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.TrimSpace(string(b[:n]))
+	host, err := a.Open(id + "/read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskNS := ns.Clone(context.Background())
+	if err := taskNS.Bind(ns, "#wmoutput/"+id+"/write", "wm/output"); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := taskNS.Open("wm/output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := writer.(io.Writer)
+	if n, err := w.Write([]byte("123456789")); !errors.Is(err, ErrSaturated) || n != 0 {
+		t.Fatalf("overflow=(%d,%v)", n, err)
+	}
+	if n, err := w.Write([]byte("ok")); err != nil || n != 2 {
+		t.Fatalf("write=(%d,%v)", n, err)
+	}
+	got := make([]byte, 2)
+	n, err = host.Read(got)
+	if err != nil || n != len(got) || string(got) != "ok" {
+		t.Fatalf("read=(%q,%v)", got, err)
+	}
+	if err := host.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Open(id + "/write"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("queue not reclaimed: %v", err)
+	}
+}
+
 func TestQueueAllocatorOpenContextRoutesTaskCancellation(t *testing.T) {
 	a := &QueueAllocator{MaxBytes: 8, MaxQueues: 1}
 	nf, err := a.Open("new")

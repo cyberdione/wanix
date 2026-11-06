@@ -62,6 +62,7 @@ func main() {
 		{"#pipe", &pipe.Allocator{}},
 		{"#signal", &signal.Allocator{}},
 		{"#wminput", &signal.QueueAllocator{MaxBytes: 32 * 1024, MaxQueues: 64}},
+		{"#wmoutput", &signal.QueueAllocator{MaxBytes: 32 * 1024, MaxQueues: 64}},
 		// {"#ramfs", &memfs.Allocator{}},
 		{"#js", jsfs.NewFS(js.Global())},
 	}
