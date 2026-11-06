@@ -124,7 +124,18 @@ self.onmessage = async (e) => {
         console.log("linux sync worker started");
         const caller = new CallBuffer(e.data.buffer);
         try {
-            await runLinux(e, caller);
+            if (e.data.diagnosticProfile === "capture-2-authored-layout-v1") {
+                const [{createCapture2Runner}, {createCapture2PairedLoader}, {VMError}] = await Promise.all([
+                    import("./capture2-runner.mjs"),
+                    import("./capture2-runtime/capture-2-paired-loader-adapter.mjs"),
+                    import("./capture2-runtime/vm.mjs"),
+                ]);
+                await createCapture2Runner({createPairedLoader: createCapture2PairedLoader,
+                    createLinuxPersonality, extractWasm,
+                    isCopyFault: error => error instanceof VMError && error.code === "EFAULT"})(e, caller);
+            } else if (e.data.diagnosticProfile !== undefined) {
+                throw new TypeError("unsupported diagnostic profile");
+            } else await runLinux(e, caller);
         } catch (err) {
             console.error("linux sync worker failed:", err);
             try { caller.call("exit", { code: 1 }); } catch (_) {}
@@ -167,6 +178,7 @@ async function initializeTaskWorker(e) {
         stderr: `${TASKNS}/${tid}/fd/2`,
         tid,
         stdinText,
+        diagnosticProfile: e.data.worker.diagnosticProfile,
     });
 }
 
@@ -312,7 +324,7 @@ export function messageHandler(fs, call, tid) {
     };
 }
 
-function extractWasm(bin) {
+export function extractWasm(bin) {
     const b0 = new Uint8Array(bin);
     // production payloads are raw wasm modules; the private ELF envelope is
     // also accepted for diagnostic artifacts
@@ -362,7 +374,7 @@ function buildInitialStack(memory, base, capacity, argv, envp) {
 // legacy diagnostic policy; absence means ENOSYS, not simulated allocation.
 // finish preserves the existing normal-exit cleanup; traps/cancellation remain
 // the caller's lifecycle responsibility, as in the original worker.
-export function createLinuxPersonality(e, caller, memory, { arena = null } = {}) {
+export function createLinuxPersonality(e, caller, memory, { arena = null, exit = null, identity = 4242 } = {}) {
     const tid = e.data.tid;
     const stdinBytes = e.data.stdinText == null ? null : new TextEncoder().encode(e.data.stdinText);
     let stdinPos = 0;
@@ -451,6 +463,7 @@ export function createLinuxPersonality(e, caller, memory, { arena = null } = {})
                 const base = vv.getUint32(iov + 8 * i, true);
                 const len = vv.getUint32(iov + 8 * i + 4, true);
                 if (base > uu.length || len > uu.length - base) return -14;
+                memory.check?.(base, len, 2);
                 vectors.push([base, len]);
             }
             const description = openFiles.get(fd);
@@ -512,6 +525,7 @@ export function createLinuxPersonality(e, caller, memory, { arena = null } = {})
         case 63: { // read(fd, buf, count) — task-provided stdin text or streams
             const fd = a[0], buf = a[1] >>> 0, count = a[2] >>> 0, uu = u();
             if (buf > uu.length || count > uu.length - buf) return -14;
+            memory.check?.(buf, count, 2);
             if (fd === 0 && stdinBytes !== null) {
                 const chunk = stdinBytes.subarray(stdinPos, stdinPos + count);
                 stdinPos += chunk.length;
@@ -562,6 +576,7 @@ export function createLinuxPersonality(e, caller, memory, { arena = null } = {})
             const path = raw.replace(/^\/+/, "");
             if (!/^(?:out\.txt|(?:tmp\/)?tmpfile_[^/]+)$/.test(path)) return -13;
             const name = path.startsWith("tmp/") ? path.slice(4) : path;
+            memory.check?.(buf, 256, 2);
             const result = caller.call("path_stat", {path: `${TASKNS}/${tid}/w/${name}`, nofollow: !!(flags & 0x100)});
             if (!result || result.ok !== true) return -(result?.errno || 5);
             const stat = result.stat;
@@ -597,7 +612,7 @@ export function createLinuxPersonality(e, caller, memory, { arena = null } = {})
             return result?.ok === true ? 0 : -(result?.errno || 5);
         }
         case 29: return -25;        // ioctl: ENOTTY
-        case 96: return 4242;       // set_tid_address
+        case 96: return identity;       // set_tid_address
         case 166: { // asm-generic umask; Linux v6.12 kernel/sys.c:1906-1910
             const previous = currentUmask;
             currentUmask = a[0] & 0o777;
@@ -629,16 +644,23 @@ export function createLinuxPersonality(e, caller, memory, { arena = null } = {})
             if (size > 2 ** 32 - start) return -12;
             return -38;
         }
-        case 93: case 94: exitCode = a[0] & 255; throw { kind: "exit" };
+        case 93: case 94: exitCode = a[0] & 255; if (exit) return exit(exitCode); throw { kind: "exit" };
         default: return -38;
         }
     }
 
+    let cleaned = false;
+    function cleanup() {
+        if (cleaned) return;
+        cleaned = true;
+        for (const fd of [1, 2]) { try { streams[fd]?.flush(); } catch (_) {} }
+        for (const h of openFiles.values()) { try { h.close(); } catch (_) {} }
+    }
     return {
         syscall: __syscall,
+        cleanup,
         finish() {
-            for (const fd of [1, 2]) { try { streams[fd].flush(); } catch (_) {} }
-            for (const h of openFiles.values()) { try { h.close(); } catch (_) {} }
+            cleanup();
             caller.call("exit", { code: exitCode });
         },
     };
