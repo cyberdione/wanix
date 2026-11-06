@@ -1,4 +1,4 @@
-import { exactStatSize, copySizeStatx, validBackendFD, fdStatSize } from "./statx-core.js";
+import { exactStatSize, copySizeStatx, validBackendFD, fdStatSize, fstatBrokerResult } from "./statx-core.js";
 import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
 import { FileDescription } from "./file-description.js";
 
@@ -95,9 +95,13 @@ function messageHandler(fs, call, tid) {
                 break;
             }
             case "fd_stat_size": {
-                if (!validBackendFD(e.data.fd)) throw new Error("invalid backend fd");
-                const stat = await fs.fstat(e.data.fd);
-                call.respond(exactStatSize(stat));
+                if (!validBackendFD(e.data.fd)) { call.respond({ok:false,errno:22}); break; }
+                try {
+                    const result = await fs.fstatResult(e.data.fd);
+                    call.respond(fstatBrokerResult(result));
+                } catch (_) {
+                    call.respond({ok:false,errno:5});
+                }
                 break;
             }
             case "path_size": {

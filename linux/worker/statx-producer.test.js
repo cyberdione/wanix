@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { exactStatSize } from "./statx-core.js";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const source = await readFile(new URL("./worker.js", import.meta.url), "utf8");
-assert.equal(hash(source), "f1a24d8c446221b5ca39610be6892d82c5fbb2a8bb90a74f8589c623b936ebc6");
+assert.equal(hash(source), "739c39cf7bfda382c951f36fc2c9a1b13af32877d3a2bef23bb5cd7a18c2411e");
 const startMarker = "function messageHandler(";
 const endMarker = "\nfunction extractWasm(";
 assert.equal(source.split(startMarker).length, 2);
@@ -15,9 +15,9 @@ const start = source.indexOf(startMarker);
 const separator = source.indexOf(endMarker, start);
 // Include the one LF separator in the RAW pin; never trim source.
 const closure = source.slice(start, separator + 1);
-assert.equal(hash(closure), "a8040306bdee28af5254e4c135158ce9f93962c0d30b8104379319fd194f6849");
+assert.equal(hash(closure), "de7987464acb960adc692cf6399c0c70017a082bc38b14df97a9a251ec9dc255");
 const core = await readFile(new URL("./statx-core.js", import.meta.url));
-assert.equal(hash(core), "3c326cd967e23f92100962b42976b26c4c03bcdf34817f06487749f6c169bd6c");
+assert.equal(hash(core), "3b4ff211ae2b678affba649ccef996c232be231010217f6acce329bdf39cf549");
 // Host Error injection makes actual instanceof Error branch agree with host fakes.
 const context = vm.createContext({ exactStatSize, Error });
 vm.runInContext(closure + "\nglobalThis.handlerFactory = messageHandler;", context);

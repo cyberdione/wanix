@@ -50,7 +50,7 @@ try {
    calls.push([method,args]);
    if(method==="path_touch")return true;
    if(method==="path_open")return backendFD;
-   if(method==="fd_stat_size")return 9;
+   if(method==="fd_stat_size")return {ok:true,size:9};
    if(method==="path_size")return 11;
    if(method==="fd_close" || method==="exit")return true;
    throw Error("unexpected FD test call");
@@ -82,6 +82,20 @@ try {
   }}});
   await runLinux({data:{tid:"diagnostic",stdinText:"",bin:new Uint8Array([0,97,115,109,1,0,0,0,0]),args:[],env:[]}},caller);
   assert.equal(calls.filter(([method])=>method==="fd_close").length,1);
+ }
+ for(const reply of [{ok:false,errno:9},{ok:false,errno:"EBADF"},{ok:true,size:0,errno:9},{ok:false,errno:9,size:0}]) {
+  const memory=new WebAssembly.Memory({initial:1,maximum:256});
+  const caller={call(method){if(method==="path_touch")return true;if(method==="path_open")return 17;if(method==="fd_stat_size")return reply;if(method==="fd_close"||method==="exit")return;throw Error("unexpected typed test call");}};
+  WebAssembly.compile=async()=>({diagnostic:true});
+  WebAssembly.instantiate=async(_m,imports)=>({exports:{memory,_start(){
+   const bytes=new Uint8Array(memory.buffer);bytes.set(new TextEncoder().encode("out.txt\0"),64);
+   const syscall=imports["ferrule.linux.syscall"].syscall;
+   const fd=syscall(56,-100,64,0,0,0,0);
+   bytes.fill(0xaa,1023,1281);const before=bytes.slice();
+   assert.equal(syscall(291,fd,0,0x1000,0x7ff,1024,0),reply.ok===false&&reply.errno===9&&!Object.hasOwn(reply,"size")?-9:-5);
+   assert.deepEqual(bytes,before);
+  }}});
+  await runLinux({data:{tid:"diagnostic",bin:new Uint8Array([0,97,115,109,1,0,0,0,0]),args:[],env:[]}},caller);
  }
  console.log("actual statx dispatch diagnostic cases PASS; fake Wasm startup, producer/flags/path not acceptance");
 } finally {
