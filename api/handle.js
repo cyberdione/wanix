@@ -1,4 +1,5 @@
 import * as duplex from "@progrium/duplex";
+import {validateFstatResult} from "./filesystem-result.js";
 
 export class WanixHandle {
     constructor(port) {
@@ -143,6 +144,10 @@ export class WanixHandle {
     async sync(fd) {
         this.logger(`sync ${fd}`);
         return (await this.peer.call("Sync", [fd])).value;
+    }
+
+    async fstatResult(fd) {
+        return validateFstatResult((await this.peer.call("FstatResult", [fd])).value);
     }
 
     async fstat(fd) {

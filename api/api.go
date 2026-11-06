@@ -59,6 +59,7 @@ func Responder(sess mux.Session, task *wanix.Task) {
 		"WriteFile":  syscaller.writeFile,
 		"AppendFile": syscaller.appendFile,
 		"Fstat":      syscaller.fstat,
+        "FstatResult": syscaller.fstatResult,
 		"Lstat":      syscaller.lstat,
 		"Chmod":      syscaller.chmod,
 		"Chown":      syscaller.chown,
