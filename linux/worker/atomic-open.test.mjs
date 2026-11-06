@@ -31,7 +31,7 @@ test('atomic existing open uses real handle, API fd-zero fixture and broker code
     const broker=messageHandler(h,cb,'test');
     const request=async (access='read',truncate=false,path='#task/test/w/out.txt')=>{
         calls.length=0;
-        await broker({data:{method:'path_open_existing',path,access,truncate}});
+        await broker({data:{method:'path_open_existing',maxExistingSize:0x7fffffff,path,access,truncate}});
         return decode(Buffer.from(cb.data.slice(0,cb.len[0])).toString('hex'));
     };
     assert.deepEqual(await request(),{ok:true,fd:0}); assert.equal(content,'original');
@@ -64,7 +64,7 @@ test('actual syscall dispatch maps asm-generic TRUNC through real CallBuffer',as
         assert.equal(syscall(56,-100,128,0o1000,0),-22); assert.equal(calls.length,0);
         for(const flags of [0,1,2,0o1001,0o1002]) {
             assert.ok(syscall(56,-100,128,flags,0)>=3);
-            assert.deepEqual(calls.at(-1),{method:'path_open_existing',path:'#task/test/w/out.txt',access:['read','write','readwrite'][flags&3],create:false,exclusive:false,truncate:!!(flags&0o1000),perm:0});
+            assert.deepEqual(calls.at(-1),{method:'path_open_existing',maxExistingSize:0x7fffffff,path:'#task/test/w/out.txt',access:['read','write','readwrite'][flags&3],create:false,exclusive:false,truncate:!!(flags&0o1000),perm:0});
         }
         for(const flags of [128,1024,0o4000]) {const n=calls.length;assert.equal(syscall(56,-100,128,flags,0),-38);assert.equal(calls.length,n);}
     }}});

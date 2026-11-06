@@ -57,7 +57,7 @@ test("Go fixtures through actual JS decoder, explicit handle and broker response
         [{OK:false, Error:{Code:"UNKNOWN"}},5]]) {
         value = envelope;
         cb.ctrl[0] = 0;
-        await broker({data:{method:"path_open_existing",path:"#task/test/w/out.txt"}});
+        await broker({data:{maxExistingSize:0x7fffffff,method:"path_open_existing",path:"#task/test/w/out.txt"}});
         const reply = fixtureDecode(Buffer.from(cb.data.slice(0, cb.len[0])).toString("hex"));
         assert.deepEqual(reply, {ok:false,errno});
     }
@@ -69,7 +69,7 @@ test("Go fixtures through actual JS decoder, explicit handle and broker response
         selectors.push(selector);
         return {value: fixtureDecode(fixtures[selector === "OpenFileResult" ? "openZero" : "statNegative"])};
     };
-    await broker({data:{method:"path_open_existing",path:"#task/test/w/out.txt"}});
+    await broker({data:{maxExistingSize:0x7fffffff,method:"path_open_existing",path:"#task/test/w/out.txt"}});
     assert.deepEqual(fixtureDecode(Buffer.from(cb.data.slice(0, cb.len[0])).toString("hex")), {ok:true,fd:0});
     assert.deepEqual(selectors, ["LstatResult", "OpenFileResult"]);
 });
@@ -83,7 +83,7 @@ test("real CallBuffer overflow closes unpublished fd exactly once without retry"
             async openFileResult() {return {OK:true,Value:1000};},
             async close(fd) {closed.push(fd);},
         }, cb, "test");
-        await broker({data:{method,path:"#task/test/w/out.txt"}});
+        await broker({data:{maxExistingSize:0x7fffffff,method,path:"#task/test/w/out.txt"}});
         assert.deepEqual(closed,[1000]);
         assert.equal(Atomics.load(cb.ctrl,0),0);
     }
@@ -105,7 +105,7 @@ test("consumed response followed by ready reset and throw never reclaims fd", as
             async openFileResult() {return {OK:true,Value:7};},
             async close(fd) {closed.push(fd);},
         },cb,"test");
-        await broker({data:{method,path:"#task/test/w/out.txt"}});
+        await broker({data:{maxExistingSize:0x7fffffff,method,path:"#task/test/w/out.txt"}});
         assert.deepEqual(closed,[]);
         assert.equal(Atomics.load(cb.ctrl,0),0);
         const published = fixtureDecode(Buffer.from(cb.data.slice(0, cb.len[0])).toString("hex"));

@@ -15,14 +15,14 @@ import (
 // Exit does not revoke the returned caller-owned handle. Task-owned callers must
 // use OpenScratchFD, not a later OpenFD registration after a destructive open.
 func (t *Task) OpenScratchFile(name, access string, truncate bool) (fs.File, error) {
-	h, _, err := t.openScratchFile(name, access, truncate, false, false, 0, false)
+	h, _, err := t.openScratchFile(name, access, truncate, false, false, 0, false, nil)
 	return h, err
 }
 
 // OpenScratchFD admits the backend open and task-owned FD publication together.
 // An Exit after success may close the FD, but cannot retroactively reject the open.
 func (t *Task) OpenScratchFD(name, access string, truncate bool) (int, error) {
-	_, fd, err := t.openScratchFile(name, access, truncate, false, false, 0, true)
+	_, fd, err := t.openScratchFile(name, access, truncate, false, false, 0, true, nil)
 	if err != nil {
 		return -1, err
 	}
@@ -32,11 +32,17 @@ func (t *Task) OpenScratchFD(name, access string, truncate bool) (int, error) {
 // OpenScratchCreateFD uses already-masked ordinary permission metadata. It does
 // not enforce Unix DAC. Creation and descriptor admission share the exit gate.
 func (t *Task) OpenScratchCreateFD(name, access string, truncate, create, exclusive bool, perm fs.FileMode) (int, error) {
-	_, fd, err := t.openScratchFile(name, access, truncate, create, exclusive, perm, true)
+	_, fd, err := t.openScratchFile(name, access, truncate, create, exclusive, perm, true, nil)
 	return fd, err
 }
 
-func (t *Task) openScratchFile(name, access string, truncate, create, exclusive bool, perm fs.FileMode, publish bool) (fs.File, int, error) {
+// OpenScratchCreateBoundedFD adds an inclusive existing-file admission ceiling.
+func (t *Task) OpenScratchCreateBoundedFD(name, access string, truncate, create, exclusive bool, perm fs.FileMode, maxExistingSize uint64) (int, error) {
+	_, fd, err := t.openScratchFile(name, access, truncate, create, exclusive, perm, true, &maxExistingSize)
+	return fd, err
+}
+
+func (t *Task) openScratchFile(name, access string, truncate, create, exclusive bool, perm fs.FileMode, publish bool, maxExistingSize *uint64) (fs.File, int, error) {
 	if perm & ^fs.FileMode(0777) != 0 || !create && perm != 0 || exclusive && !create {
 		return nil, -1, syscall.EINVAL
 	}
@@ -105,7 +111,12 @@ func (t *Task) openScratchFile(name, access string, truncate, create, exclusive 
 	if t.exited {
 		return nil, -1, fs.ErrClosed
 	}
-	h, err := owned.OpenFileGranted(leaf, flags, perm, true, true)
+	var h *scratchfs.File
+	if maxExistingSize == nil {
+		h, err = owned.OpenFileGranted(leaf, flags, perm, true, true)
+	} else {
+		h, err = owned.OpenFileGrantedBounded(leaf, flags, perm, true, true, *maxExistingSize)
+	}
 	if err != nil {
 		return nil, -1, err
 	}

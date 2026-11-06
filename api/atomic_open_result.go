@@ -15,7 +15,7 @@ func (s *syscaller) openFileResult(r rpc.Responder, c *rpc.Call) {
 		return
 	}
 	fail := func(e syscall.Errno) { _ = r.Return(failedFilesystemResult[uint64](e)) }
-	if len(req) != 6 {
+	if len(req) != 6 && len(req) != 7 {
 		fail(syscall.EINVAL)
 		return
 	}
@@ -29,7 +29,22 @@ func (s *syscaller) openFileResult(r rpc.Responder, c *rpc.Call) {
 		fail(syscall.EINVAL)
 		return
 	}
-	fd, err := s.task.OpenScratchCreateFD(name, access, trunc, create, excl, fs.FileMode(perm))
+	var fd int
+	var err error
+	if raw, present := req["MaxExistingSize"]; present {
+		ceiling, valid := raw.(uint64)
+		if !valid || ceiling > 9007199254740991 {
+			fail(syscall.EINVAL)
+			return
+		}
+		fd, err = s.task.OpenScratchCreateBoundedFD(name, access, trunc, create, excl, fs.FileMode(perm), ceiling)
+	} else {
+		if len(req) != 6 {
+			fail(syscall.EINVAL)
+			return
+		}
+		fd, err = s.task.OpenScratchCreateFD(name, access, trunc, create, excl, fs.FileMode(perm))
+	}
 	if err != nil {
 		_ = r.Return(failedFilesystemResult[uint64](err))
 		return

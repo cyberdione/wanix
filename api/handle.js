@@ -9,7 +9,7 @@ export class FilesystemResultProtocolError extends Error {
 
 const filesystemCodes = new Set([
     "ENOENT", "EACCES", "EPERM", "EEXIST", "EINVAL", "ENOTDIR",
-    "EISDIR", "ELOOP", "ENAMETOOLONG", "EIO", "ENOSYS",
+    "EISDIR", "ELOOP", "ENAMETOOLONG", "EIO", "ENOSYS", "EOVERFLOW",
 ]);
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -168,15 +168,17 @@ export class WanixHandle {
     }
 
     // Semantic access is explicit; guest numeric flags are not portable here.
-    async openFileResult(name, access, { create = false, exclusive = false, truncate = false, perm = 0 } = {}) {
+    async openFileResult(name, access, { create = false, exclusive = false, truncate = false, perm = 0, maxExistingSize } = {}) {
         if (typeof name !== "string" || !["read", "write", "readwrite"].includes(access) ||
             typeof create !== "boolean" || typeof exclusive !== "boolean" || typeof truncate !== "boolean" ||
             !Number.isInteger(perm) || perm < 0 || perm > 0o777 || (!create && perm !== 0) ||
-            (exclusive && !create) || (access === "read" && truncate)) {
+            (exclusive && !create) || (access === "read" && truncate) ||
+            (maxExistingSize !== undefined && (!Number.isSafeInteger(maxExistingSize) || maxExistingSize < 0))) {
             throw new TypeError("invalid semantic open parameters");
         }
         const response = await this.peer.call("OpenFileResult", {
             Path: name, Access: access, Create: create, Exclusive: exclusive, Truncate: truncate, Perm: perm,
+            ...(maxExistingSize === undefined ? {} : {MaxExistingSize: maxExistingSize}),
         });
         // A malformed reply does not establish ownership of any descriptor.
         // In particular, never close a number guessed from an invalid envelope.

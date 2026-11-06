@@ -209,3 +209,23 @@ test("openFileResult RPC failure stays distinct without retry or cleanup", async
     await assert.rejects(h.openFileResult("x", "read"), error => error === failure);
     assert.equal(calls.length, 1);
 });
+
+test("optional existing size ceiling is exact over real CBOR while legacy remains six fields", async () => {
+    for (const maxExistingSize of [0, 0x7fffffff, 0x80000000, Number.MAX_SAFE_INTEGER]) {
+        let sent;
+        const h = handle({peer: {async call(method, args) {
+            assert.equal(method, "OpenFileResult"); sent = await codecRoundtrip(args);
+            return {value: await codecRoundtrip({OK:false, Error:{Code:"EOVERFLOW"}})};
+        }}});
+        assert.deepEqual(await h.openFileResult("x", "write", {truncate:true, maxExistingSize}),
+            {OK:false, Error:{Code:"EOVERFLOW"}});
+        assert.equal(sent.MaxExistingSize, maxExistingSize);
+        assert.equal(Object.keys(sent).length, 7);
+    }
+    const calls=[], h=resultHandle({OK:true,Value:0}, calls);
+    for(const maxExistingSize of [null,-1,1.5,NaN,Infinity,2**53,1n,"1"]) {
+        await assert.rejects(h.openFileResult("x","read",{maxExistingSize}),TypeError);
+    }
+    assert.equal(calls.length,0);
+    await h.openFileResult("x","read");assert.equal(Object.keys(calls[0][1]).length,6);
+});

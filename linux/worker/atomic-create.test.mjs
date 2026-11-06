@@ -23,7 +23,7 @@ test('CREATE captures ordinary effective mode in actual dispatch and CallBuffer'
             syscall(166,mask);
             for(const mode of [0o666,0o755,0]) {
                 assert.ok(open(0o100,mode)>=3);
-                assert.deepEqual(calls.at(-1),{method:'path_open_existing',path:'#task/test/w/out.txt',access:'read',create:true,exclusive:false,truncate:false,perm:(mode&0o777)&~mask});
+                assert.deepEqual(calls.at(-1),{method:'path_open_existing',maxExistingSize:0x7fffffff,path:'#task/test/w/out.txt',access:'read',create:true,exclusive:false,truncate:false,perm:(mode&0o777)&~mask});
             }
         }
         syscall(166,0o022); changeMask=true;
@@ -45,12 +45,12 @@ test('CREATE captures ordinary effective mode in actual dispatch and CallBuffer'
     finally {WebAssembly.compile=compile;WebAssembly.instantiate=instantiate;globalThis.postMessage=post;}
 });
 
-test('CREATE broker uses actual six-field API codec with no lstat or generic fallback',async()=>{
+test('CREATE broker uses actual seven-field API codec with no lstat or generic fallback',async()=>{
     const h=Object.create(WanixHandle.prototype), calls=[], replies=[];
     let content='keep', mode=0o640, exists=true, error;
     h.peer={async call(method,args){
         calls.push([method,args]); assert.equal(method,'OpenFileResult');
-        assert.deepEqual(Object.keys(args).sort(),['Access','Create','Exclusive','Path','Perm','Truncate']);
+        assert.deepEqual(Object.keys(args).sort(),['Access','Create','Exclusive','MaxExistingSize','Path','Perm','Truncate']);
         if(error) return {value:{OK:false,Error:{Code:error}}};
         if(exists && args.Exclusive) return {value:{OK:false,Error:{Code:'EEXIST'}}};
         if(!exists) {exists=true;mode=args.Perm;content='';}
@@ -60,7 +60,7 @@ test('CREATE broker uses actual six-field API codec with no lstat or generic fal
     const handler=messageHandler(h,{respond(v){replies.push(v);}},'test');
     const request=async(extra={})=>{
         calls.length=0;
-        await handler({data:{method:'path_open_existing',path:'#task/test/w/out.txt',access:'readwrite',create:true,exclusive:false,truncate:false,perm:0,...extra}});
+        await handler({data:{method:'path_open_existing',maxExistingSize:0x7fffffff,path:'#task/test/w/out.txt',access:'readwrite',create:true,exclusive:false,truncate:false,perm:0,...extra}});
         return replies.pop();
     };
     assert.deepEqual(await request(),{ok:true,fd:0}); assert.equal(content,'keep');assert.equal(mode,0o640);

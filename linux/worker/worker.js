@@ -10,6 +10,11 @@ import { FileDescription } from "./file-description.js";
 const TASKNS = "#task";
 const CALL_BUFFER_BYTES = 16384;
 // asm-generic UAPI fcntl.h: ordinary-mode atomic open subset.
+// Selected wasm32 Linux ABI: CONFIG_ARCH_32BIT_OFF_T=y semantics (no
+// force_o_largefile), per Linux v6.12 include/linux/fcntl.h. Pointer width
+// alone does not select this policy. This is bounded Number-safe admission.
+const O_LARGEFILE = 0x8000;
+const MAX_NON_LFS = 0x7fffffff;
 const O_ACCMODE = 3;
 const O_CREAT = 0o100;
 const O_EXCL = 0o200;
@@ -33,7 +38,7 @@ function taskFile(path, tid) {
 }
 
 const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EACCES: 13,
-    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40});
+    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40, EOVERFLOW: 75});
 
 async function filesystemValue(fs, method, path) {
     const result = await fs[method](path);
@@ -182,14 +187,16 @@ export function messageHandler(fs, call, tid) {
                     const create = e.data.create ?? false;
                     const exclusive = e.data.exclusive ?? false;
                     const perm = e.data.perm ?? 0;
+                    const maxExistingSize = e.data.maxExistingSize;
                     if (!["read", "write", "readwrite"].includes(access) || typeof truncate !== "boolean" ||
                         typeof create !== "boolean" || typeof exclusive !== "boolean" ||
                         !Number.isInteger(perm) || perm < 0 || perm > 0o777 ||
-                        (!create && perm !== 0) || (exclusive && !create) || (access === "read" && truncate)) {
+                        (!create && perm !== 0) || (exclusive && !create) || (access === "read" && truncate) ||
+                        !Number.isSafeInteger(maxExistingSize) || maxExistingSize < 0) {
                         throw Object.assign(new Error("invalid existing open"), {code: "EINVAL"});
                     }
                     if (!create) await requireRegularLeaf(fs, e.data.path);
-                    const result = await fs.openFileResult(e.data.path, access, {create, exclusive, truncate, perm});
+                    const result = await fs.openFileResult(e.data.path, access, {create, exclusive, truncate, perm, maxExistingSize});
                     let fd;
                     if (result.OK) fd = result.Value;
                     else {
@@ -467,7 +474,7 @@ export async function runLinux(e, caller) {
             const target = `${TASKNS}/${tid}/w/${name}`;
             const flags = a[2] >>> 0, accessMode = flags & O_ACCMODE;
             // APPEND and EXCL without CREATE are explicitly unsupported.
-            if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC)) || accessMode === O_ACCMODE) return -38;
+            if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC | O_LARGEFILE)) || accessMode === O_ACCMODE) return -38;
             const create = !!(flags & O_CREAT), exclusive = !!(flags & O_EXCL);
             if (exclusive && !create) return -38;
             if (create && (a[3] & ~0o777)) return -38;
@@ -478,6 +485,7 @@ export async function runLinux(e, caller) {
             let opened;
             try { opened = caller.call("path_open_existing", {
                 path: target, access: ["read", "write", "readwrite"][accessMode], create, exclusive, truncate, perm,
+                maxExistingSize: flags & O_LARGEFILE ? Number.MAX_SAFE_INTEGER : MAX_NON_LFS,
             }); }
             catch (err) { return -ioErrno(err); }
             if (opened?.ok === false && Number.isInteger(opened.errno) &&

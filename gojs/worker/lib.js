@@ -3957,7 +3957,8 @@ var filesystemCodes = /* @__PURE__ */ new Set([
   "ELOOP",
   "ENAMETOOLONG",
   "EIO",
-  "ENOSYS"
+  "ENOSYS",
+  "EOVERFLOW"
 ]);
 var record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -4088,8 +4089,8 @@ var WanixHandle = class {
     return validateResult((await this.peer.call("LstatResult", [name])).value, validStat);
   }
   // Semantic access is explicit; guest numeric flags are not portable here.
-  async openFileResult(name, access, { create = false, exclusive = false, truncate = false, perm = 0 } = {}) {
-    if (typeof name !== "string" || !["read", "write", "readwrite"].includes(access) || typeof create !== "boolean" || typeof exclusive !== "boolean" || typeof truncate !== "boolean" || !Number.isInteger(perm) || perm < 0 || perm > 511 || !create && perm !== 0 || exclusive && !create || access === "read" && truncate) {
+  async openFileResult(name, access, { create = false, exclusive = false, truncate = false, perm = 0, maxExistingSize } = {}) {
+    if (typeof name !== "string" || !["read", "write", "readwrite"].includes(access) || typeof create !== "boolean" || typeof exclusive !== "boolean" || typeof truncate !== "boolean" || !Number.isInteger(perm) || perm < 0 || perm > 511 || !create && perm !== 0 || exclusive && !create || access === "read" && truncate || maxExistingSize !== void 0 && (!Number.isSafeInteger(maxExistingSize) || maxExistingSize < 0)) {
       throw new TypeError("invalid semantic open parameters");
     }
     const response = await this.peer.call("OpenFileResult", {
@@ -4098,7 +4099,8 @@ var WanixHandle = class {
       Create: create,
       Exclusive: exclusive,
       Truncate: truncate,
-      Perm: perm
+      Perm: perm,
+      ...maxExistingSize === void 0 ? {} : { MaxExistingSize: maxExistingSize }
     });
     return validateResult(response?.value, validFD);
   }

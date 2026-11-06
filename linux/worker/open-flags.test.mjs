@@ -15,7 +15,7 @@ test('actual dispatch preserves existing bytes, rejects features before calls, a
         bytes.set(new TextEncoder().encode('out.txt\0'), 128);
         const open = flags => s(56, -100, 128, flags, 0o600);
         for (const flags of [3, 128, 1024, 2|1024,
-            0x8000, 0x10000, 0x20000, 0x80000, -1]) {
+            0x10000, 0x20000, 0x80000, -1]) {
             const n = calls.length;
             assert.equal(open(flags), -38, String(flags));
             assert.equal(calls.length, n);
@@ -60,7 +60,7 @@ test('existing-open broker preserves typed errno and never creates or truncates'
     const fs={async lstatResult(path) { calls.push('lstat'); if(error) throw error; return {OK:true,Value:{Mode:0x8000,IsDir:false}}; },
         async openFileResult() { calls.push('open'); return {OK:true, Value:8}; }};
     const handler=messageHandler(fs,{respond(v){replies.push(v);}},'test');
-    const request=path=>handler({data:{method:'path_open_existing',path}});
+    const request=path=>handler({data:{method:'path_open_existing',maxExistingSize:0x7fffffff,path}});
     await request('#task/other/w/out.txt'); assert.deepEqual(replies.pop(),{ok:false,errno:13});
     assert.deepEqual(calls,[]);
     for (const [code,errno] of [['ENOENT',2],['EACCES',13],['EIO',5]]) {

@@ -50,6 +50,8 @@ func filesystemCode(err error) string {
 			return "ELOOP"
 		case syscall.ENAMETOOLONG:
 			return "ENAMETOOLONG"
+		case syscall.EOVERFLOW:
+			return "EOVERFLOW"
 		case syscall.EIO:
 			return "EIO"
 		default:

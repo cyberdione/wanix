@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -99,7 +100,7 @@ func (f *FS) Stat(n string) (fs.FileInfo, error) {
 
 // Open retains the historical scratch read/write access; explicit OpenFile
 // handles instead enforce their immutable access mode.
-func (f *FS) Open(n string) (fs.File, error) { return f.open(n, os.O_RDWR, 0, true, true, true) }
+func (f *FS) Open(n string) (fs.File, error) { return f.open(n, os.O_RDWR, 0, true, true, true, nil) }
 func (f *FS) Create(n string) (fs.File, error) {
 	return f.OpenFile(n, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
 }
@@ -124,15 +125,29 @@ func (f *FS) OpenFile(n string, flags int, perm fs.FileMode) (fs.File, error) {
 
 // OpenHandle is the typed form of OpenFile.
 func (f *FS) OpenHandle(n string, flags int, perm fs.FileMode) (*File, error) {
-	return f.open(n, flags, perm, true, true, false)
+	return f.open(n, flags, perm, true, true, false, nil)
 }
 
 // OpenFileGranted bounds access independently of mode bits. Creation requires a
 // write grant even when the resulting handle is read-only.
 func (f *FS) OpenFileGranted(n string, flags int, perm fs.FileMode, read, write bool) (*File, error) {
-	return f.open(n, flags, perm, read, write, false)
+	return f.open(n, flags, perm, read, write, false, nil)
 }
-func (f *FS) open(n string, flags int, perm fs.FileMode, read, write, legacy bool) (*File, error) {
+
+// OpenFileGrantedBounded checks existing regular inode size under the same lock
+// as lookup and truncation. The ceiling does not constrain later writes.
+func (f *FS) OpenFileGrantedBounded(n string, flags int, perm fs.FileMode, read, write bool, maxExistingSize uint64) (*File, error) {
+	return f.open(n, flags, perm, read, write, false, &maxExistingSize)
+}
+
+func checkExistingSize(size int64, ceiling uint64) error {
+	if size < 0 || uint64(size) > ceiling {
+		return syscall.EOVERFLOW
+	}
+	return nil
+}
+
+func (f *FS) open(n string, flags int, perm fs.FileMode, read, write, legacy bool, maxExistingSize *uint64) (*File, error) {
 	fail := func(e error) (*File, error) { return nil, perr("open", n, e) }
 	access := flags & 3
 	rd := access != os.O_WRONLY
@@ -162,6 +177,11 @@ func (f *FS) open(n string, flags int, perm fs.FileMode, read, write, legacy boo
 	if v.mode.IsDir() && !legacy {
 		if wr || flags&(os.O_CREATE|os.O_TRUNC|os.O_APPEND) != 0 {
 			return fail(fs.ErrInvalid)
+		}
+	}
+	if maxExistingSize != nil && v.mode.IsRegular() {
+		if err := checkExistingSize(int64(len(v.data)), *maxExistingSize); err != nil {
+			return fail(err)
 		}
 	}
 	if flags&os.O_TRUNC != 0 {

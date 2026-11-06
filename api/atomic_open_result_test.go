@@ -68,6 +68,24 @@ func TestExistingAtomicOpenSelectedRPC(t *testing.T) {
 		}
 		return got
 	}
+	// Optional ceiling is exact and rejection precedes truncation and publication.
+	bounded := request(base+"out.txt", "readwrite", true)
+	bounded["MaxExistingSize"] = uint64(7)
+	call(bounded, "EOVERFLOW")
+	unchangedBounded, _ := old.Stat()
+	if unchangedBounded.Size() != before.Size() || unchangedBounded.Sys() != before.Sys() || !unchangedBounded.ModTime().Equal(before.ModTime()) {
+		t.Fatal("bounded rejection mutated inode")
+	}
+	for _, bad := range []any{int64(-1), float64(1.5), uint64(9007199254740992), "8", nil} {
+		bounded["MaxExistingSize"] = bad
+		call(bounded, "EINVAL")
+	}
+	bounded["MaxExistingSize"] = uint64(9007199254740991)
+	bounded["Truncate"] = false
+	safe := call(bounded, "")
+	if err := task.CloseFD(int(*safe.Value)); err != nil {
+		t.Fatal(err)
+	}
 	opened := call(request(base+"out.txt", "read", false), "")
 	f, _, err := task.FD(int(*opened.Value))
 	if err != nil {
