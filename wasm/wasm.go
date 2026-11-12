@@ -22,6 +22,7 @@ import (
 	"tractor.dev/wanix/api"
 	"tractor.dev/wanix/fs"
 	"tractor.dev/wanix/fs/cowfs"
+	"tractor.dev/wanix/fs/draw"
 	"tractor.dev/wanix/fs/httpfs"
 	"tractor.dev/wanix/fs/memfs"
 	"tractor.dev/wanix/fs/net/tcp"
@@ -63,6 +64,7 @@ func main() {
 		{"#signal", &signal.Allocator{}},
 		{"#wminput", &signal.QueueAllocator{MaxBytes: 32 * 1024, MaxQueues: 64}},
 		{"#wmoutput", &signal.QueueAllocator{MaxBytes: 32 * 1024, MaxQueues: 64}},
+		{"#i", draw.New()},
 		// {"#ramfs", &memfs.Allocator{}},
 		{"#js", jsfs.NewFS(js.Global())},
 	}
