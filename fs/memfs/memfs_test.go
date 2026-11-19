@@ -3,6 +3,8 @@ package memfs
 import (
 	"bytes"
 	"context"
+ "errors"
+ "io"
 	"fmt"
 	"strings"
 	"testing"
@@ -614,4 +616,40 @@ func TestTruncate(t *testing.T) {
 			t.Errorf("expected '%s', got '%s'", expected, string(data))
 		}
 	})
+}
+
+func TestMemFSOpenUnlinkStatLifetime(t *testing.T) {
+ m := From(fskit.MapFS{"held": fskit.RawNode([]byte("old"))})
+ oldFile, err := m.Open("held")
+ if err != nil { t.Fatal(err) }
+ defer oldFile.Close()
+ before, err := oldFile.Stat()
+ if err != nil { t.Fatal(err) }
+ if before.Size() != 3 { t.Fatalf("old size = %d", before.Size()) }
+ if err := m.Remove("held"); err != nil { t.Fatal(err) }
+ if _, err := m.Stat("held"); !errors.Is(err, fs.ErrNotExist) { t.Fatalf("removed path stat: %v", err) }
+ after, err := oldFile.Stat()
+ if err != nil { t.Fatal(err) }
+ if after != before || after.Size() != 3 { t.Fatal("opened inode changed after remove") }
+ oldData, err := io.ReadAll(oldFile)
+ if err != nil { t.Fatal(err) }
+ if string(oldData) != "old" { t.Fatalf("old data = %q", oldData) }
+ created, err := fs.Create(m, "held")
+ if err != nil { t.Fatal(err) }
+ writer, ok := created.(io.Writer)
+ if !ok { created.Close(); t.Fatal("created file is not writable") }
+ if _, err := writer.Write([]byte("replacement")); err != nil { created.Close(); t.Fatal(err) }
+ if err := created.Close(); err != nil { t.Fatal(err) }
+ newFile, err := m.Open("held")
+ if err != nil { t.Fatal(err) }
+ defer newFile.Close()
+ newInfo, err := newFile.Stat()
+ if err != nil { t.Fatal(err) }
+ if newInfo == before || newInfo.Size() != 11 { t.Fatal("recreated path did not get distinct inode") }
+ newData, err := io.ReadAll(newFile)
+ if err != nil { t.Fatal(err) }
+ if string(newData) != "replacement" { t.Fatalf("new data = %q", newData) }
+ stillOld, err := oldFile.Stat()
+ if err != nil { t.Fatal(err) }
+ if stillOld != before || stillOld.Size() != 3 || !bytes.Equal(before.(*fskit.Node).Data(), []byte("old")) { t.Fatal("replacement altered held inode") }
 }
