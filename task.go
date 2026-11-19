@@ -42,29 +42,33 @@ type TaskDriver interface {
 }
 
 type Task struct {
-	driver    TaskDriver
-	parent    *Task
-	ns        *vfs.NS
-	id        int
-	alias     string
-	kind      string
-	cmd       string
-	args      []string
-	env       []string
-	exit      string
-	dir       string
-	fds       map[int]*openFile
-	closedFDs map[int]bool
-	fdIdx     int
-	cleanup   []func()
-	exited    bool
-	cancel    context.CancelFunc
-	fsys      *TaskFS
-	worker    any
-	export    fs.FS
-	w         fs.FS
-	mu        sync.Mutex
-	exitMu    sync.RWMutex // status snapshots must not reenter mu through FD routing
+	driver              TaskDriver
+	parent              *Task
+	ns                  *vfs.NS
+	id                  int
+	alias               string
+	kind                string
+	cmd                 string
+	args                []string
+	env                 []string
+	exit                string
+	dir                 string
+	fds                 map[int]*openFile
+	closedFDs           map[int]bool
+	fdIdx               int
+	cleanup             []func()
+	cleanupDone         chan struct{}
+	cleanupInFlight     int
+	cleanupBaseFinished bool
+	cleanupSealed       bool
+	exited              bool
+	cancel              context.CancelFunc
+	fsys                *TaskFS
+	worker              any
+	export              fs.FS
+	w                   fs.FS
+	mu                  sync.Mutex
+	exitMu              sync.RWMutex // status snapshots must not reenter mu through FD routing
 }
 
 func Export(t *Task, export fs.FS) {
@@ -128,12 +132,45 @@ func (t *Task) Register(kind string, driver TaskDriver) {
 func (t *Task) AddCleanup(close func()) {
 	t.mu.Lock()
 	if t.exited {
+		counted := !t.cleanupSealed
+		if counted {
+			t.cleanupInFlight++
+		}
 		t.mu.Unlock()
 		close()
+		// A panic must leave completion pending even if the caller recovers.
+		if counted {
+			t.mu.Lock()
+			t.cleanupInFlight--
+			t.sealCleanupLocked()
+			t.mu.Unlock()
+		}
 		return
 	}
 	t.cleanup = append(t.cleanup, close)
 	t.mu.Unlock()
+}
+
+// cleanupCompletion observes this exit's cleanup attempts, including late
+// registrations admitted before sealing. Post-seal registrations still close
+// immediately but are outside this epoch. It is not worker quiescence.
+func (t *Task) cleanupCompletion() <-chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cleanupDone == nil {
+		t.cleanupDone = make(chan struct{})
+	}
+	return t.cleanupDone
+}
+
+func (t *Task) sealCleanupLocked() {
+	if t.cleanupBaseFinished && t.cleanupInFlight == 0 && !t.cleanupSealed {
+		if t.cleanupDone == nil {
+			t.cleanupDone = make(chan struct{})
+		}
+		t.cleanupSealed = true
+		close(t.cleanupDone)
+	}
 }
 
 // Exit cancels execution and releases owned resources exactly once.
@@ -166,6 +203,10 @@ func (t *Task) Exit(status string) {
 			_ = file.file.Close()
 		}
 	}
+	t.mu.Lock()
+	t.cleanupBaseFinished = true
+	t.sealCleanupLocked()
+	t.mu.Unlock()
 }
 
 func (t *Task) Start() error {
