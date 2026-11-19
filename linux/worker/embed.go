@@ -11,7 +11,7 @@ import (
 	"syscall/js"
 )
 
-//go:embed lib.js worker.js file-description.js
+//go:embed lib.js worker.js file-description.js statx-core.js
 var Dir embed.FS
 
 func BlobURL() string {
@@ -31,6 +31,12 @@ func BlobURL() string {
 	}
 	fileImport := fmt.Sprintf("data:text/javascript;base64,%s", base64.StdEncoding.EncodeToString(fileDescription))
 	workerSrc = strings.Replace(workerSrc, "./file-description.js", fileImport, 1)
+	statxCore, err := fs.ReadFile(Dir, "statx-core.js")
+	if err != nil {
+		panic(err)
+	}
+	statxImport := fmt.Sprintf("data:text/javascript;base64,%s", base64.StdEncoding.EncodeToString(statxCore))
+	workerSrc = strings.Replace(workerSrc, "./statx-core.js", statxImport, 1)
 	blob := js.Global().Get("Blob").New(js.ValueOf([]any{workerSrc}), js.ValueOf(map[string]any{"type": "text/javascript"}))
 	url := js.Global().Get("URL").Call("createObjectURL", blob)
 	return url.String()
