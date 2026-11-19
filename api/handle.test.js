@@ -70,3 +70,91 @@ test("readAt forwards fd, count and offset", async () => {
     });
     assert.equal(await h.readAt(7, 2, 11), data);
 });
+
+import { CBORCodec } from "@progrium/duplex";
+import { FilesystemResultProtocolError } from "./handle.js";
+
+async function codecRoundtrip(value) {
+    const codec = new CBORCodec();
+    let bytes;
+    await codec.encoder({ async write(data) { bytes = data.slice(); return data.length; } }).encode(value);
+    let offset = 0;
+    return codec.decoder({ async read(data) {
+        const n = Math.min(data.length, bytes.length - offset);
+        data.set(bytes.subarray(offset, offset + n)); offset += n; return n;
+    } }).decode(bytes.length);
+}
+
+function resultHandle(value, calls = []) {
+    return handle({ logger() {}, peer: { async call(method, args) {
+        calls.push([method, args]); return { value };
+    } } });
+}
+
+test("explicit result selectors forward one path and preserve envelopes through real duplex CBOR", async () => {
+    for (const [method, selector] of [["openResult", "OpenResult"], ["statResult", "StatResult"], ["lstatResult", "LstatResult"]]) {
+        const calls = [];
+        const value = await codecRoundtrip({ OK: false, Error: { Code: "EPERM" } });
+        assert.equal(await resultHandle(value, calls)[method]("/x"), value);
+        assert.deepEqual(calls, [[selector, ["/x"]]]);
+    }
+    assert.deepEqual(await resultHandle(await codecRoundtrip({ OK: true, Value: 0 })).openResult("/x"), {OK: true, Value: 0});
+});
+
+test("malformed result envelopes reject locally; unsafe fds are never closed", async () => {
+    for (const value of [null, [], {}, { OK: 1 }, { OK: true }, { OK: false },
+        {OK: false, Error: {Code: "UNKNOWN"}}, {OK: false, Error: {Code: "ENOENT"}, Value: 0},
+        ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1, 1n, "0", null].map(Value => ({OK: true, Value}))]) {
+        const calls = [];
+        await assert.rejects(resultHandle(value, calls).openResult("x"), FilesystemResultProtocolError);
+        assert.deepEqual(calls, [["OpenResult", ["x"]]]);
+    }
+});
+
+test("recognizable allocation rejected before handoff closes once and retains cleanup failure", async () => {
+    const calls = [], cleanupError = new Error("close failed");
+    const h = resultHandle({OK: true, Value: 7, Error: {Code: "EIO"}}, calls);
+    h.close = async fd => { calls.push(["Close", [fd]]); throw cleanupError; };
+    await assert.rejects(h.openResult("x"), error => error instanceof FilesystemResultProtocolError && error.cleanupError === cleanupError);
+    assert.deepEqual(calls, [["OpenResult", ["x"]], ["Close", [7]]]);
+});
+
+test("RPC rejection stays distinct and never retries or closes a guessed fd", async () => {
+    const failure = new Error("unsupported selector"), calls = [];
+    const h = handle({ peer: { async call(...args) { calls.push(args); throw failure; } } });
+    for (const method of ["openResult", "statResult", "lstatResult"]) await assert.rejects(h[method]("x"), error => error === failure);
+    assert.equal(calls.length, 3);
+});
+
+test("legacy selectors return their original unvalidated values", async () => {
+    const calls = [], value = {legacy: true};
+    const h = resultHandle(value, calls);
+    for (const method of ["open", "stat", "lstat"]) assert.equal(await h[method]("x"), value);
+    assert.deepEqual(calls.map(c => c[0]), ["Open", "Stat", "Lstat"]);
+});
+
+import { readFile } from "node:fs/promises";
+
+test("actual Go CBOR fixtures decode with duplex codec and validate unchanged", async () => {
+    const fixtures = JSON.parse(await readFile(new URL("./filesystem_result.fixture.json", import.meta.url)));
+    const decoded = {};
+    for (const [name, hex] of Object.entries(fixtures)) {
+        const bytes = Buffer.from(hex, "hex"); let offset = 0;
+        decoded[name] = await new CBORCodec().decoder({ async read(target) {
+            const n = Math.min(target.length, bytes.length - offset);
+            target.set(bytes.subarray(offset, offset + n)); offset += n; return n;
+        } }).decode(bytes.length);
+    }
+    assert.deepEqual(await resultHandle(decoded.openZero).openResult("x"), {OK: true, Value: 0});
+    assert.deepEqual(await resultHandle(decoded.notExist).openResult("x"), {OK: false, Error: {Code: "ENOENT"}});
+    for (const method of ["statResult", "lstatResult"]) {
+        assert.deepEqual(await resultHandle(decoded.statNegative)[method]("x"), {
+            OK: true, Value: {Size: -1, Mode: 33188, IsDir: false, ModTime: 1700000000},
+        });
+        for (const patch of [{Size: 2 ** 53}, {Size: 1n}, {Mode: -1}, {Mode: 2 ** 32},
+            {IsDir: 0}, {ModTime: new Date()}, {ModTime: NaN}, {ModTime: "1700000000"}]) {
+            await assert.rejects(resultHandle({OK: true, Value: {...decoded.statNegative.Value, ...patch}})[method]("x"), FilesystemResultProtocolError);
+        }
+        await assert.rejects(resultHandle({OK: true, Value: {Size: 0, Mode: 0, IsDir: false}})[method]("x"), FilesystemResultProtocolError);
+    }
+});

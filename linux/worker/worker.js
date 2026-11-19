@@ -26,22 +26,56 @@ function taskFile(path, tid) {
     return !name.includes("/") && admittedName(name) === name;
 }
 
+const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EACCES: 13,
+    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ELOOP: 40});
+
+async function filesystemValue(fs, method, path) {
+    const result = await fs[method](path);
+    if (!result.OK) {
+        const error = new Error("filesystem operation failed");
+        error.code = result.Error.Code;
+        throw error;
+    }
+    return result.Value;
+}
+
 async function requireRegularLeaf(fs, path, allowMissing = false) {
     let stat;
-    try { stat = await fs.lstat(path); }
+    try { stat = await filesystemValue(fs, "lstatResult", path); }
     catch (err) {
-        if (allowMissing && (err?.code === "ENOENT" || /file does not exist|no such file/i.test(String(err)))) return;
+        if (allowMissing && err?.code === "ENOENT") return;
         throw err;
     }
     // This rejects existing leaf links, not parent links or replacement races.
-    if (!stat || stat.IsDir || (stat.Mode & 0xf000) !== 0x8000) throw new Error("permission denied: unsupported file type");
+    if (!stat || stat.IsDir || (stat.Mode & 0xf000) !== 0x8000) {
+        throw Object.assign(new Error("permission denied: unsupported file type"), {code: "EACCES"});
+    }
 }
 
+async function publishOpen(fs, call, fd, typed) {
+    const value = typed ? {ok: true, fd} : fd;
+    if (call instanceof CallBuffer) {
+        try {
+            // Exercise the actual encoder/capacity check on a private buffer.
+            // A failure here cannot have published this fd to the recipient.
+            const preflight = new CallBuffer(new SharedArrayBuffer(call.buffer.byteLength));
+            CallBuffer.prototype.respond.call(preflight, value);
+        } catch (_) {
+            try { await fs.close(fd); } catch (_) { /* task teardown remains the fallback */ }
+            return;
+        }
+    }
+    try { call.respond(value); }
+    catch (_) {
+        // The recipient may already have consumed this reply and reset ready.
+        // No shared-state reread can prove nondelivery; do not reclaim or retry.
+    }
+}
 
 function ioErrno(err) {
     const codes = { ENOENT: 2, EEXIST: 17, ENOTDIR: 20, EIO: 5, EBADF: 9, EAGAIN: 11, EACCES: 13, EINVAL: 22,
         ENOSPC: 28, EPIPE: 32, ENOSYS: 38, EOVERFLOW: 75, EINTR: 4 };
-    return codes[err?.code] ?? (Number.isInteger(err?.errno) && err.errno > 0 && err.errno <= 4095 ? err.errno : 5);
+    return filesystemErrnos[err?.code] ?? codes[err?.code] ?? (Number.isInteger(err?.errno) && err.errno > 0 && err.errno <= 4095 ? err.errno : 5);
 }
 
 function transfer(handle, operation, data) {
@@ -139,11 +173,10 @@ export function messageHandler(fs, call, tid) {
                 }
                 try {
                     await requireRegularLeaf(fs, e.data.path);
-                    const fd = await fs.open(e.data.path);
-                    if (!Number.isSafeInteger(fd) || fd < 0) throw new Error("invalid open response");
-                    call.respond({ok: true, fd});
+                    const fd = await filesystemValue(fs, "openResult", e.data.path);
+                    await publishOpen(fs, call, fd, true);
                 } catch (err) {
-                    call.respond({ok: false, errno: ioErrno(err)});
+                    call.respond({ok: false, errno: filesystemErrnos[err?.code] ?? 5});
                 }
                 break;
             }
@@ -153,12 +186,12 @@ export function messageHandler(fs, call, tid) {
                     if (!taskFile(e.data.path, tid)) throw new Error("permission denied");
                     await requireRegularLeaf(fs, e.data.path);
                 }
-                const fd = await fs.open(e.data.path);
-                call.respond(fd);
+                const fd = await filesystemValue(fs, "openResult", e.data.path);
+                await publishOpen(fs, call, fd, false);
                 break;
             }
             case "path_size": {
-                const stat = await fs.stat(e.data.path);
+                const stat = await filesystemValue(fs, "statResult", e.data.path);
                 call.respond(stat?.Size ?? 0);
                 break;
             }
@@ -172,14 +205,10 @@ export function messageHandler(fs, call, tid) {
                         call.respond({ok: false, errno: 13});
                         break;
                     }
-                    const stat = e.data.nofollow ? await fs.lstat(e.data.path) : await fs.stat(e.data.path);
+                    const stat = await filesystemValue(fs, e.data.nofollow ? "lstatResult" : "statResult", e.data.path);
                     call.respond({ok: true, stat});
                 } catch (err) {
-                    const message = err instanceof Error ? err.message : String(err);
-                    const errno = /file does not exist|no such file/i.test(message) ? 2
-                        : /permission denied/i.test(message) ? 13
-                        : /not a directory/i.test(message) ? 20 : 5;
-                    call.respond({ok: false, errno});
+                    call.respond({ok: false, errno: filesystemErrnos[err?.code] ?? 5});
                 }
                 break;
             }
@@ -194,7 +223,7 @@ export function messageHandler(fs, call, tid) {
                         call.respond({ok: false, message: "permission denied", errno: 13});
                         break;
                     }
-                    const stat = await fs.lstat(e.data.path);
+                    const stat = await filesystemValue(fs, "lstatResult", e.data.path);
                     if (stat.IsDir || (stat.Mode & 0xf000) === 0x4000) {
                         call.respond({ok: false, message: "is a directory", errno: 21});
                     } else if ((stat.Mode & 0xf000) !== 0x8000) {
@@ -205,11 +234,7 @@ export function messageHandler(fs, call, tid) {
                     }
                 } catch (err) {
                     const message = err instanceof Error ? err.message : String(err);
-                    const errno = /file does not exist|no such file/i.test(message) ? 2
-                        : /permission denied/i.test(message) ? 13
-                        : /not a directory/i.test(message) ? 20
-                        : /directory not empty/i.test(message) ? 39
-                        : /operation not supported/i.test(message) ? 38 : 5;
+                    const errno = filesystemErrnos[err?.code] ?? 5;
                     call.respond({ok: false, message: message, errno});
                 }
                 break;
