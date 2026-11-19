@@ -34,9 +34,9 @@ var __toESM = (mod, isNodeMode, target3) => (target3 = mod != null ? __create(__
   mod
 ));
 
-// node_modules/ws/browser.js
+// ../wanix-ferrule-stdio/node_modules/ws/browser.js
 var require_browser = __commonJS({
-  "node_modules/ws/browser.js"(exports, module) {
+  "../wanix-ferrule-stdio/node_modules/ws/browser.js"(exports, module) {
     "use strict";
     module.exports = function() {
       throw new Error(
@@ -46,7 +46,7 @@ var require_browser = __commonJS({
   }
 });
 
-// node_modules/cbor-x/decode.js
+// ../wanix-ferrule-stdio/node_modules/cbor-x/decode.js
 var decoder;
 try {
   decoder = new TextDecoder();
@@ -521,16 +521,7 @@ function createStructureReader(structure) {
         return compiledReader(read);
       compiledReader = compiledReader.next;
     }
-    if (this.slowReads++ >= inlineObjectReadThreshold) {
-      let array = this.length == length ? this : this.slice(0, length);
-      compiledReader = currentDecoder.keyMap ? new Function("r", "return {" + array.map((k) => currentDecoder.decodeKey(k)).map((k) => validName.test(k) ? safeKey(k) + ":r()" : "[" + JSON.stringify(k) + "]:r()").join(",") + "}") : new Function("r", "return {" + array.map((key) => validName.test(key) ? safeKey(key) + ":r()" : "[" + JSON.stringify(key) + "]:r()").join(",") + "}");
-      if (this.compiledReader)
-        compiledReader.next = this.compiledReader;
-      compiledReader.propertyCount = length;
-      this.compiledReader = compiledReader;
-      return compiledReader(read);
-    }
-    let object = {};
+        let object = {};
     if (currentDecoder.keyMap) for (let i = 0; i < length; i++) object[safeKey(currentDecoder.decodeKey(this[i]))] = read();
     else for (let i = 0; i < length; i++) {
       object[safeKey(this[i])] = read();
@@ -1105,7 +1096,7 @@ var FLOAT32_OPTIONS = {
   DECIMAL_FIT: 4
 };
 
-// node_modules/cbor-x/encode.js
+// ../wanix-ferrule-stdio/node_modules/cbor-x/encode.js
 var textEncoder;
 try {
   textEncoder = new TextEncoder();
@@ -2330,7 +2321,7 @@ var CallBuffer = class {
   }
 };
 
-// node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
 var wasi_defs_exports = {};
 __export(wasi_defs_exports, {
   ADVICE_DONTNEED: () => ADVICE_DONTNEED,
@@ -2849,7 +2840,7 @@ var Prestat = class _Prestat {
   }
 };
 
-// node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
 var Debug = class Debug2 {
   enable(enabled) {
     this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -2874,7 +2865,7 @@ function createLogger(enabled, prefix) {
 }
 var debug = new Debug(false);
 
-// node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
 var WASIProcExit = class extends Error {
   constructor(code) {
     super("exit with exit code " + code);
@@ -3438,7 +3429,7 @@ var WASI = class WASI2 {
   }
 };
 
-// node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
 var Fd = class {
   fd_allocate(offset, len) {
     return ERRNO_NOTSUP;
@@ -3538,7 +3529,7 @@ var Inode = class _Inode {
 };
 Inode.next_ino = 1n;
 
-// node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
 var OpenFile = class extends Fd {
   fd_allocate(offset, len) {
     if (this.file.size > offset + len) {
@@ -4473,7 +4464,7 @@ function applyPatchPollOneoff(self) {
   });
 }
 
-// node_modules/@progrium/duplex/esm/codec/json.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/json.js
 (function() {
   if (typeof global !== "undefined" && !global.TextEncoder) {
     const { TextEncoder: TextEncoder2, TextDecoder: TextDecoder2 } = __require("util");
@@ -4482,7 +4473,7 @@ function applyPatchPollOneoff(self) {
   }
 })();
 
-// node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js
 var decoder2;
 try {
   decoder2 = new TextDecoder();
@@ -4917,7 +4908,6 @@ function read2() {
       throw new Error("Unknown CBOR token " + token);
   }
 }
-var validName2 = /^[a-zA-Z_$][a-zA-Z\d_$]*$/;
 function createStructureReader2(structure) {
   function readObject() {
     let length = src2[position3++];
@@ -4944,15 +4934,6 @@ function createStructureReader2(structure) {
       if (compiledReader.propertyCount === length)
         return compiledReader(read2);
       compiledReader = compiledReader.next;
-    }
-    if (this.slowReads++ >= 3) {
-      let array = this.length == length ? this : this.slice(0, length);
-      compiledReader = currentDecoder2.keyMap ? new Function("r", "return {" + array.map((k) => currentDecoder2.decodeKey(k)).map((k) => validName2.test(k) ? safeKey2(k) + ":r()" : "[" + JSON.stringify(k) + "]:r()").join(",") + "}") : new Function("r", "return {" + array.map((key) => validName2.test(key) ? safeKey2(key) + ":r()" : "[" + JSON.stringify(key) + "]:r()").join(",") + "}");
-      if (this.compiledReader)
-        compiledReader.next = this.compiledReader;
-      compiledReader.propertyCount = length;
-      this.compiledReader = compiledReader;
-      return compiledReader(read2);
     }
     let object = {};
     if (currentDecoder2.keyMap)
@@ -5506,7 +5487,7 @@ var FLOAT32_OPTIONS2 = {
   DECIMAL_FIT: 4
 };
 
-// node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/encode.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/encode.js
 var textEncoder2;
 try {
   textEncoder2 = new TextEncoder();
@@ -6682,7 +6663,7 @@ var REUSE_BUFFER_MODE2 = 512;
 var RESET_BUFFER_MODE2 = 1024;
 var THROW_ON_ITERABLE2 = 2048;
 
-// node_modules/@progrium/duplex/esm/codec/cbor.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/cbor.js
 var CBORCodec = class {
   constructor(debug3 = false, extensions3) {
     Object.defineProperty(this, "debug", {
@@ -6766,7 +6747,7 @@ var CBORDecoder = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/buffer.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/buffer.js
 function copy(src3, dst, off = 0) {
   off = Math.max(0, Math.min(off, dst.byteLength));
   const dstBytesAvailable = dst.byteLength - off;
@@ -6971,7 +6952,7 @@ var Buffer4 = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/codec/frame.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/frame.js
 var FrameCodec = class {
   constructor(codec) {
     Object.defineProperty(this, "codec", {
@@ -7050,7 +7031,7 @@ var FrameDecoder = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/rpc/client.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/client.js
 var Client = class {
   constructor(session, codec) {
     Object.defineProperty(this, "session", {
@@ -7111,7 +7092,7 @@ function VirtualCaller(caller) {
   return pathBuilder("", caller.call.bind(caller));
 }
 
-// node_modules/@progrium/duplex/esm/rpc/handler.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/handler.js
 function HandlerFunc(fn) {
   return { respondRPC: fn };
 }
@@ -7195,7 +7176,7 @@ var RespondMux = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/rpc/responder.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/responder.js
 async function Respond(ch, codec, handler) {
   const framer = new FrameCodec(codec);
   const dec = framer.decoder(ch);
@@ -7270,7 +7251,7 @@ var responder = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/rpc/mod.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/mod.js
 var Call = class {
   constructor(selector, channel, decoder3) {
     Object.defineProperty(this, "selector", {
@@ -7368,7 +7349,7 @@ var Response2 = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/fn/proxy.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/fn/proxy.js
 function methodProxy(caller) {
   function pathBuilder(path, callable) {
     return new Proxy(Object.assign(() => {
@@ -7386,7 +7367,7 @@ function methodProxy(caller) {
   return pathBuilder("", caller.call.bind(caller));
 }
 
-// node_modules/@progrium/duplex/esm/peer/peer.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/peer/peer.js
 var Peer = class {
   constructor(session, codec) {
     Object.defineProperty(this, "session", {
@@ -7448,7 +7429,7 @@ var Peer = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/mux/codec/message.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/message.js
 var OpenID = 100;
 var OpenConfirmID = 101;
 var OpenFailureID = 102;
@@ -7466,7 +7447,7 @@ var payloadSizes = /* @__PURE__ */ new Map([
   [CloseID, 4]
 ]);
 
-// node_modules/@progrium/duplex/esm/mux/codec/encoder.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/encoder.js
 var Encoder3 = class {
   constructor(w) {
     Object.defineProperty(this, "w", {
@@ -7555,7 +7536,7 @@ function Marshal(obj) {
   throw `marshal of unknown type: ${obj}`;
 }
 
-// node_modules/@progrium/duplex/esm/mux/util.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/util.js
 function concat(list, totalLength) {
   const buf = new Uint8Array(totalLength);
   let offset = 0;
@@ -7701,7 +7682,7 @@ var ReadBuffer = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/mux/codec/decoder.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/decoder.js
 var Decoder3 = class {
   constructor(r) {
     Object.defineProperty(this, "r", {
@@ -7814,13 +7795,13 @@ function Unmarshal(packet) {
   }
 }
 
-// node_modules/@progrium/duplex/esm/mux/codec/mod.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/mod.js
 var debug2 = {
   messages: false,
   bytes: false
 };
 
-// node_modules/@progrium/duplex/esm/mux/session/session.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/session/session.js
 var minPacketLength = 9;
 var maxPacketLength = Number.MAX_VALUE;
 var Session = class {
@@ -7984,7 +7965,7 @@ var Session = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/mux/session/channel.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/session/channel.js
 var channelMaxPacket = 1 << 24;
 var channelWindowSize = 64 * channelMaxPacket;
 var Channel = class {
@@ -8233,7 +8214,7 @@ var Channel = class {
   }
 };
 
-// node_modules/@progrium/duplex/esm/_dnt.shims.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/_dnt.shims.js
 var import_ws = __toESM(require_browser(), 1);
 var import_ws2 = __toESM(require_browser(), 1);
 var dntGlobals = {
@@ -8294,7 +8275,7 @@ function createMergeProxy(baseObj, extObj) {
   });
 }
 
-// node_modules/@progrium/duplex/esm/transport/messageport.js
+// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/transport/messageport.js
 var Conn = class {
   constructor(port) {
     Object.defineProperty(this, "port", {
@@ -8478,6 +8459,10 @@ var WanixHandle2 = class {
   async read(fd, count) {
     this.logger(`read ${fd} ${count}`);
     return (await this.peer.call("Read", [fd, count])).value;
+  }
+  async readAt(fd, count, offset) {
+    this.logger(`readAt ${fd} ${count} ${offset}`);
+    return (await this.peer.call("ReadAt", [fd, count, offset])).value;
   }
   async write(fd, data) {
     this.logger(`write ${fd} len(${data.length})`);

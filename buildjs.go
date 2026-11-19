@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/evanw/esbuild/pkg/api"
@@ -66,6 +67,16 @@ func main() {
 		build(wasiOpts)
 	}()
 
+	// The linux worker shares the wasi worker library surface
+	// (WanixHandle/CallBuffer/FileHandle); copy the bundle in place.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		wasiOpts := wasiOpts
+		wasiOpts.Outfile = "linux/worker/lib.js"
+		build(wasiOpts)
+	}()
+
 	gojsOpts := opts
 	gojsOpts.EntryPoints = []string{"gojs/mod.ts"}
 	gojsOpts.Outfile = "gojs/worker/lib.js"
@@ -77,7 +88,39 @@ func main() {
 	}()
 
 	wg.Wait()
+
+	for _, path := range []string{"gojs/worker/lib.js", "wasi/worker/lib.js", "linux/worker/lib.js"} {
+		if err := patchCSPDecoder(path); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	fmt.Println("js build complete")
+}
+
+func patchCSPDecoder(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	source := string(data)
+	start := strings.Index(source, "if (this.slowReads++ >= ")
+	if start < 0 {
+		if strings.Contains(source, "new Function(\"r\"") {
+			return fmt.Errorf("unrecognized dynamic CBOR compiler in %s", path)
+		}
+		return nil
+	}
+	end := strings.Index(source[start:], "    let object = {};")
+	if end < 0 {
+		return fmt.Errorf("CBOR object fallback not found in %s", path)
+	}
+	end += start
+	patched := source[:start] + source[end:]
+	if strings.Contains(patched, "new Function(\"r\"") {
+		return fmt.Errorf("dynamic CBOR compilation remains in %s", path)
+	}
+	return os.WriteFile(path, []byte(patched), 0644)
 }
 
 func build(opts api.BuildOptions) {

@@ -89,17 +89,20 @@ export class WanixKernel {
 
     async load(buffer) {
         const wasmBytes = new Uint8Array(buffer);
-        const wasmString = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false }).decode(wasmBytes);
+        // A CSP host can preload the matching runtime as an external script.
+        if (!window.Go) {
+            const wasmString = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false }).decode(wasmBytes);
 
-        const execScript = document.createElement("script");
-        if (wasmString.includes("asyncify_start_unwind")) {
-            if (this.debug) console.log("TinyGo WASM detected");
-            execScript.textContent = wasmExecTinygo;
-        } else {
-            if (this.debug) console.log("Go WASM detected");
-            execScript.textContent = wasmExecGo;
+            const execScript = document.createElement("script");
+            if (wasmString.includes("asyncify_start_unwind")) {
+                if (this.debug) console.log("TinyGo WASM detected");
+                execScript.textContent = wasmExecTinygo;
+            } else {
+                if (this.debug) console.log("Go WASM detected");
+                execScript.textContent = wasmExecGo;
+            }
+            document.head.appendChild(execScript);
         }
-        document.head.appendChild(execScript);
 
         const go = new window.Go();
         go.importObject["wanix"] = {
