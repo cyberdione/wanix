@@ -4,22 +4,24 @@
 package main
 
 import (
+	"flag"
 	"fmt"
- "flag"
- "path/filepath"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/evanw/esbuild/pkg/api"
- "tractor.dev/wanix/internal/cbornoeval"
+	"tractor.dev/wanix/internal/cbornoeval"
 )
 
 func main() {
-    wrapperOnly := flag.Bool("wrapper-only", false, "build only the wrapper")
-    wrapperOutput := flag.String("wrapper-output", "", "exclusive wrapper output outside checkout")
-    flag.Parse()
-    if !*wrapperOnly && *wrapperOutput != "" { panic("wrapper-output requires wrapper-only") }
+	wrapperOnly := flag.Bool("wrapper-only", false, "build only the wrapper")
+	wrapperOutput := flag.String("wrapper-output", "", "exclusive wrapper output outside checkout")
+	flag.Parse()
+	if !*wrapperOnly && *wrapperOutput != "" {
+		panic("wrapper-output requires wrapper-only")
+	}
 
 	opts := api.BuildOptions{
 		Bundle:   true,
@@ -27,7 +29,7 @@ func main() {
 		Format:   api.FormatESModule,
 		External: []string{"util"},
 		LogLevel: api.LogLevelInfo,
-        Plugins: []api.Plugin{cbornoeval.Plugin()},
+		Plugins:  []api.Plugin{cbornoeval.Plugin()},
 	}
 
 	wanixOpts := opts
@@ -38,27 +40,48 @@ func main() {
 		".tinygo.js": api.LoaderText,
 		".css":       api.LoaderText,
 	}
-    if *wrapperOnly {
-        root, err := os.Getwd()
-        if err != nil { panic(err) }
-        out := *wrapperOutput
-        if !filepath.IsAbs(out) { panic("wrapper output must be absolute") }
-        rel, err := filepath.Rel(root, out)
-        if err != nil { panic(err) }
-        if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) { panic("wrapper output must be outside checkout") }
-        wanixOpts.Write = false
-        wanixOpts.Outfile = out
-        result := api.Build(wanixOpts)
-        if len(result.Errors) != 0 { os.Exit(1) }
-        if len(result.OutputFiles) != 1 || result.OutputFiles[0].Path != out { panic("expected exactly one wrapper output") }
-        contents := result.OutputFiles[0].Contents
-        if len(contents) > 4*1024*1024 { panic("wrapper exceeds 4 MiB cap") }
-        f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-        if err != nil { panic(err) }
-        if _, err := f.Write(contents); err != nil { f.Close(); panic(err) }
-        if err := f.Close(); err != nil { panic(err) }
-        return
-    }
+	if *wrapperOnly {
+		root, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		out := *wrapperOutput
+		if !filepath.IsAbs(out) {
+			panic("wrapper output must be absolute")
+		}
+		rel, err := filepath.Rel(root, out)
+		if err != nil {
+			panic(err)
+		}
+		if rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			panic("wrapper output must be outside checkout")
+		}
+		wanixOpts.Write = false
+		wanixOpts.Outfile = out
+		result := api.Build(wanixOpts)
+		if len(result.Errors) != 0 {
+			os.Exit(1)
+		}
+		if len(result.OutputFiles) != 1 || result.OutputFiles[0].Path != out {
+			panic("expected exactly one wrapper output")
+		}
+		contents := result.OutputFiles[0].Contents
+		if len(contents) > 4*1024*1024 {
+			panic("wrapper exceeds 4 MiB cap")
+		}
+		f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+		if err != nil {
+			panic(err)
+		}
+		if _, err := f.Write(contents); err != nil {
+			f.Close()
+			panic(err)
+		}
+		if err := f.Close(); err != nil {
+			panic(err)
+		}
+		return
+	}
 
 	var wg sync.WaitGroup
 

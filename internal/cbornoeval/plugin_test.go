@@ -17,9 +17,12 @@ func TestRejectUnexpectedInputs(t *testing.T) {
 }
 
 func TestPinnedOutputsAndAlteredPatchRejected(t *testing.T) {
+	// Tests run against the vendored pristine inputs in testdata/node_modules
+	// so they are deterministic; CBOR_INPUT_ROOT overrides with a real
+	// node_modules tree to verify an actual install of the pinned version.
 	root := os.Getenv("CBOR_INPUT_ROOT")
 	if root == "" {
-		t.Fatal("CBOR_INPUT_ROOT required")
+		root = filepath.Join("testdata", "node_modules")
 	}
 	original := append([]byte(nil), patchData...)
 	defer func() { patchData = original }()
@@ -34,8 +37,12 @@ func TestPinnedOutputsAndAlteredPatchRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 		patchData = original
-		if _, err := Transform(path, source); err != nil {
+		output, err := Transform(path, source)
+		if err != nil {
 			t.Fatal(err)
+		}
+		if strings.Contains(string(output), "new Function") {
+			t.Fatalf("%s: output still contains new Function", p.Path)
 		}
 		changed := append([]patch(nil), patches...)
 		for i := range changed {

@@ -3,10 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const root = process.env.CBOR_INPUT_ROOT;
-assert.ok(root, 'CBOR_INPUT_ROOT must identify the reviewed original dependency tree');
+const root = process.env.CBOR_INPUT_ROOT || fileURLToPath(new URL('./testdata/node_modules', import.meta.url));
 const patches = JSON.parse(fs.readFileSync(new URL('./patches.json', import.meta.url)));
 function context() {
  let calls = 0;
