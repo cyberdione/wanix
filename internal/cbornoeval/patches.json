@@ -1,0 +1,14 @@
+[
+  {
+    "path": "@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js",
+    "sha256": "e73bcf529c9e7a1c3f1ea3b46475b5614544f7ec1590c93b4a6ce69b61605602",
+    "old": "        if (this.slowReads++ >= 3) { // create a fast compiled reader\n            let array = this.length == length ? this : this.slice(0, length);\n            compiledReader = currentDecoder.keyMap\n                ? new Function('r', 'return {' + array.map(k => currentDecoder.decodeKey(k)).map(k => validName.test(k) ? safeKey(k) + ':r()' : ('[' + JSON.stringify(k) + ']:r()')).join(',') + '}')\n                : new Function('r', 'return {' + array.map(key => validName.test(key) ? safeKey(key) + ':r()' : ('[' + JSON.stringify(key) + ']:r()')).join(',') + '}');\n            if (this.compiledReader)\n                compiledReader.next = this.compiledReader; // if there is an existing one, we store multiple readers as a linked list because it is usually pretty rare to have multiple readers (of different length) for the same structure\n            compiledReader.propertyCount = length;\n            this.compiledReader = compiledReader;\n            return compiledReader(read);\n        }\n",
+    "new": ""
+  },
+  {
+    "path": "@progrium/duplex/script/vnd/cbor-x-1.4.1/decode.js",
+    "sha256": "ae5ebb4448e4dcdb2a5ac83f5d26f0956bde75ca1f06f4121891ab8cb5155914",
+    "old": "        if (this.slowReads++ >= 3) { // create a fast compiled reader\n            let array = this.length == length ? this : this.slice(0, length);\n            compiledReader = currentDecoder.keyMap\n                ? new Function('r', 'return {' + array.map(k => currentDecoder.decodeKey(k)).map(k => validName.test(k) ? safeKey(k) + ':r()' : ('[' + JSON.stringify(k) + ']:r()')).join(',') + '}')\n                : new Function('r', 'return {' + array.map(key => validName.test(key) ? safeKey(key) + ':r()' : ('[' + JSON.stringify(key) + ']:r()')).join(',') + '}');\n            if (this.compiledReader)\n                compiledReader.next = this.compiledReader; // if there is an existing one, we store multiple readers as a linked list because it is usually pretty rare to have multiple readers (of different length) for the same structure\n            compiledReader.propertyCount = length;\n            this.compiledReader = compiledReader;\n            return compiledReader(read);\n        }\n",
+    "new": ""
+  }
+]
