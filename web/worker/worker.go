@@ -143,7 +143,10 @@ func (r *Resource) Start(args ...string) error {
 						log.Println("error creating client for export", err)
 						return
 					}
-					wanix.Export(r.task, exportFS)
+					if err := wanix.Export(r.task, exportFS); err != nil {
+						log.Println("error publishing task export", err)
+						return
+					}
 
 					// vm guest is still special cased for now
 					if args[0].Get("data").Get("vm").IsUndefined() {
