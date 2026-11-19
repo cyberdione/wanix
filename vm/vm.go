@@ -48,8 +48,9 @@ func (r *VM) SetGuest(exported fs.FS) error {
 		panic("vfs not initialized before setting guest")
 	}
 	r.guest = exported
+	namespace := r.vfs
 	go func() {
-		if err := r.vfs.Bind(r.guest, ".", "guest"); err != nil {
+		if err := namespace.Bind(exported, ".", "guest"); err != nil {
 			log.Println("error binding guest", err)
 		}
 	}()
