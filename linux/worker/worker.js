@@ -8,6 +8,93 @@ import { FileDescription } from "./file-description.js";
 //     the wasm32 artifact with the ferrule.linux.syscall import.
 
 const TASKNS = "#task";
+const CALL_BUFFER_BYTES = 16384;
+// asm-generic UAPI fcntl.h: ordinary-mode atomic open subset.
+// Selected wasm32 Linux ABI: CONFIG_ARCH_32BIT_OFF_T=y semantics (no
+// force_o_largefile), per Linux v6.12 include/linux/fcntl.h. Pointer width
+// alone does not select this policy. This is bounded Number-safe admission.
+const O_LARGEFILE = 0x8000;
+const MAX_NON_LFS = 0x7fffffff;
+const O_ACCMODE = 3;
+const O_CREAT = 0o100;
+const O_EXCL = 0o200;
+const O_TRUNC = 0o1000;
+// Explicit parentless Linux bootstrap launch profile, not inherited host state.
+// Linux v6.12 fs/fs_struct.c:167 (init_fs), init/init_task.c:125.
+const LINUX_BOOTSTRAP_UMASK = 0o022;
+
+
+function admittedName(raw) {
+    if (typeof raw !== "string" || !/^\/?(?:out\.txt|(?:tmp\/)?tmpfile_[^/\0]+)$/.test(raw)) return null;
+    const path = raw.startsWith("/") ? raw.slice(1) : raw;
+    return path.startsWith("tmp/") ? path.slice(4) : path;
+}
+
+function taskFile(path, tid) {
+    const prefix = `${TASKNS}/${tid}/w/`;
+    if (typeof path !== "string" || !path.startsWith(prefix)) return false;
+    const name = path.slice(prefix.length);
+    return !name.includes("/") && admittedName(name) === name;
+}
+
+const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EACCES: 13,
+    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40, EOVERFLOW: 75});
+
+async function filesystemValue(fs, method, path) {
+    const result = await fs[method](path);
+    if (!result.OK) {
+        const error = new Error("filesystem operation failed");
+        error.code = result.Error.Code;
+        throw error;
+    }
+    return result.Value;
+}
+
+async function requireRegularLeaf(fs, path, allowMissing = false) {
+    let stat;
+    try { stat = await filesystemValue(fs, "lstatResult", path); }
+    catch (err) {
+        if (allowMissing && err?.code === "ENOENT") return;
+        throw err;
+    }
+    // This rejects existing leaf links, not parent links or replacement races.
+    if (!stat || stat.IsDir || (stat.Mode & 0xf000) !== 0x8000) {
+        throw Object.assign(new Error("permission denied: unsupported file type"), {code: "EACCES"});
+    }
+}
+
+async function publishOpen(fs, call, fd, typed) {
+    const value = typed ? {ok: true, fd} : fd;
+    if (call instanceof CallBuffer) {
+        try {
+            // Exercise the actual encoder/capacity check on a private buffer.
+            // A failure here cannot have published this fd to the recipient.
+            const preflight = new CallBuffer(new SharedArrayBuffer(call.buffer.byteLength));
+            CallBuffer.prototype.respond.call(preflight, value);
+        } catch (_) {
+            try { await fs.close(fd); } catch (_) { /* task teardown remains the fallback */ }
+            return;
+        }
+    }
+    try { call.respond(value); }
+    catch (_) {
+        // The recipient may already have consumed this reply and reset ready.
+        // No shared-state reread can prove nondelivery; do not reclaim or retry.
+    }
+}
+
+function ioErrno(err) {
+    const codes = { ENOENT: 2, EEXIST: 17, ENOTDIR: 20, EIO: 5, EBADF: 9, EAGAIN: 11, EACCES: 13, EINVAL: 22,
+        ENOSPC: 28, EPIPE: 32, ENOSYS: 38, EOVERFLOW: 75, EINTR: 4 };
+    return filesystemErrnos[err?.code] ?? codes[err?.code] ?? (Number.isInteger(err?.errno) && err.errno > 0 && err.errno <= 4095 ? err.errno : 5);
+}
+
+function transfer(handle, operation, data) {
+    let n;
+    try { n = handle[operation](data); }
+    catch (err) { return -ioErrno(err); }
+    return Number.isSafeInteger(n) && n >= -4095 && n <= data.byteLength ? n : -5;
+}
 
 // split a cmd line on spaces, honoring single/double quotes (mirrors the
 // wanix task element's env parsing) so `rc -c 'echo hi'` keeps one argument
@@ -64,7 +151,7 @@ async function initializeTaskWorker(e) {
     }
     let stdinText = null;
     try { stdinText = await fs.readText(`${TASKNS}/${tid}/w/stdin.txt`); } catch (_) {}
-    const buffer = new SharedArrayBuffer(16384);
+    const buffer = new SharedArrayBuffer(CALL_BUFFER_BYTES);
     const call = new CallBuffer(buffer);
     const worker = new Worker(e.data.worker.url, {type: "module"});
     worker.onmessage = messageHandler(fs, call, tid);
@@ -83,22 +170,106 @@ async function initializeTaskWorker(e) {
     });
 }
 
-function messageHandler(fs, call, tid) {
+export function messageHandler(fs, call, tid) {
     return async (e) => {
         if (!e.data.method) return;
         try {
             switch (e.data.method) {
+            case "path_open_existing": {
+                // Typed atomic open; CREATE type selection belongs to the backend.
+                if (!taskFile(e.data.path, tid)) {
+                    call.respond({ok: false, errno: 13});
+                    break;
+                }
+                try {
+                    const access = e.data.access ?? "read";
+                    const truncate = e.data.truncate ?? false;
+                    const create = e.data.create ?? false;
+                    const exclusive = e.data.exclusive ?? false;
+                    const perm = e.data.perm ?? 0;
+                    const maxExistingSize = e.data.maxExistingSize;
+                    if (!["read", "write", "readwrite"].includes(access) || typeof truncate !== "boolean" ||
+                        typeof create !== "boolean" || typeof exclusive !== "boolean" ||
+                        !Number.isInteger(perm) || perm < 0 || perm > 0o777 ||
+                        (!create && perm !== 0) || (exclusive && !create) || (access === "read" && truncate) ||
+                        !Number.isSafeInteger(maxExistingSize) || maxExistingSize < 0) {
+                        throw Object.assign(new Error("invalid existing open"), {code: "EINVAL"});
+                    }
+                    if (!create) await requireRegularLeaf(fs, e.data.path);
+                    const result = await fs.openFileResult(e.data.path, access, {create, exclusive, truncate, perm, maxExistingSize});
+                    let fd;
+                    if (result.OK) fd = result.Value;
+                    else {
+                        throw Object.assign(new Error("filesystem operation failed"), {code: result.Error.Code});
+                    }
+                    await publishOpen(fs, call, fd, true);
+                } catch (err) {
+                    call.respond({ok: false, errno: filesystemErrnos[err?.code] ?? 5});
+                }
+                break;
+            }
             case "path_open": {
-                const fd = await fs.open(e.data.path);
-                call.respond(fd);
+                const stream = [0, 1, 2].some(fd => e.data.path === `${TASKNS}/${tid}/fd/${fd}`);
+                if (!stream) {
+                    if (!taskFile(e.data.path, tid)) throw new Error("permission denied");
+                    await requireRegularLeaf(fs, e.data.path);
+                }
+                const fd = await filesystemValue(fs, "openResult", e.data.path);
+                await publishOpen(fs, call, fd, false);
                 break;
             }
             case "path_size": {
-                const stat = await fs.stat(e.data.path);
+                const stat = await filesystemValue(fs, "statResult", e.data.path);
                 call.respond(stat?.Size ?? 0);
                 break;
             }
+            case "path_stat": {
+                // Use a typed envelope: CallBuffer throws for __wanix_error.
+                try {
+                    const prefix = `${TASKNS}/${tid}/w/`;
+                    const name = typeof e.data.path === "string" && e.data.path.startsWith(prefix)
+                        ? e.data.path.slice(prefix.length) : "";
+                    if (!/^(?:out\.txt|tmpfile_[^/]+)$/.test(name)) {
+                        call.respond({ok: false, errno: 13});
+                        break;
+                    }
+                    const stat = await filesystemValue(fs, e.data.nofollow ? "lstatResult" : "statResult", e.data.path);
+                    call.respond({ok: true, stat});
+                } catch (err) {
+                    call.respond({ok: false, errno: filesystemErrnos[err?.code] ?? 5});
+                }
+                break;
+            }
+            case "path_remove": {
+                // The RPC exposes generic Remove, not atomic unlink. Admit only
+                // regular files; never use RemoveAll or follow a symlink here.
+                try {
+                    const prefix = `${TASKNS}/${tid}/w/`;
+                    const name = typeof e.data.path === "string" && e.data.path.startsWith(prefix)
+                        ? e.data.path.slice(prefix.length) : "";
+                    if ((!name.startsWith("tmpfile_") && name !== "out.txt") || name.includes("/")) {
+                        call.respond({ok: false, message: "permission denied", errno: 13});
+                        break;
+                    }
+                    const stat = await filesystemValue(fs, "lstatResult", e.data.path);
+                    if (stat.IsDir || (stat.Mode & 0xf000) === 0x4000) {
+                        call.respond({ok: false, message: "is a directory", errno: 21});
+                    } else if ((stat.Mode & 0xf000) !== 0x8000) {
+                        call.respond({ok: false, message: "unsupported file type", errno: 38});
+                    } else {
+                        await fs.remove(e.data.path);
+                        call.respond({ok: true});
+                    }
+                } catch (err) {
+                    const message = err instanceof Error ? err.message : String(err);
+                    const errno = filesystemErrnos[err?.code] ?? 5;
+                    call.respond({ok: false, message: message, errno});
+                }
+                break;
+            }
             case "path_touch":
+                if (!taskFile(e.data.path, tid)) throw new Error("permission denied");
+                await requireRegularLeaf(fs, e.data.path, true);
                 await fs.writeFile(e.data.path, "");
                 call.respond(true);
                 break;
@@ -132,6 +303,10 @@ function messageHandler(fs, call, tid) {
                 call.respond({__wanix_error: `unsupported method: ${e.data.method}`});
             }
         } catch (err) {
+            if (e.data.method === "fd_read" || e.data.method === "fd_write") {
+                call.respond({ioError: ioErrno(err)});
+                return;
+            }
             call.respond({__wanix_error: err instanceof Error ? err.message : String(err)});
         }
     };
@@ -185,13 +360,32 @@ export async function runLinux(e, caller) {
     const tid = e.data.tid;
     const stdinBytes = e.data.stdinText == null ? null : new TextEncoder().encode(e.data.stdinText);
     let stdinPos = 0;
+    let currentUmask = LINUX_BOOTSTRAP_UMASK; // Each runLinux is a fresh launch, not exec.
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
     const memoryBytes = 16 * 1024 * 1024;
+    // CallBuffer reserves 16 bytes for CBOR overhead beyond its 8-byte header.
+    // Uint8Array replies use at most a tag plus a five-byte length header here.
+    const maxRead = caller.maxData ?? (CALL_BUFFER_BYTES - 8 - 16);
+    const ioCaller = { call(method, params) {
+        const value = caller.call(method, params);
+        if (method === "fd_read" || method === "fd_write") {
+            if (value?.ioError) {
+                const err = new Error("backend I/O failure");
+                err.errno = value.ioError;
+                throw err;
+            }
+            if (method === "fd_read" && value !== null &&
+                (!(value instanceof Uint8Array) || value.length > params.count)) {
+                throw new Error("invalid read response");
+            }
+        }
+        return value;
+    } };
     const streams = {};
     for (const [fd, path] of [[0, e.data.stdin], [1, e.data.stdout], [2, e.data.stderr]]) {
         if (!path) continue;
-        const h = new FileHandle(caller, path);
+        const h = new FileHandle(ioCaller, path);
         h.open();
         streams[fd] = h;
     }
@@ -199,6 +393,7 @@ export async function runLinux(e, caller) {
     let nextFd = 3;
     let exitCode = 0;
     let inst;
+    let arenaNext; // Monotonic, nonreclaiming; starts beyond the startup reservation.
 
     function syscall(nr, a0, a1, a2, a3, a4, a5) {
         const a = [a0 | 0, a1 | 0, a2 | 0, a3 | 0, a4 | 0, a5 | 0];
@@ -215,7 +410,8 @@ export async function runLinux(e, caller) {
         case 66: { // writev(fd, iov, iovcnt)
             const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
             const vv = v(), uu = u();
-            if (cnt > 1024 || iov > uu.length || cnt * 8 > uu.length - iov) return -14;
+            if (cnt < 0 || cnt > 1024) return -22;
+            if (iov > uu.length || cnt * 8 > uu.length - iov) return -14;
             let total = 0;
             const parts = [];
             for (let i = 0; i < cnt; i++) {
@@ -231,8 +427,7 @@ export async function runLinux(e, caller) {
             })();
             const handle = streams[fd] ?? openFiles.get(fd);
             if (!handle) return -9;
-            const n = handle.write(data);
-            return n ?? 0;
+            return transfer(handle, "write", data);
         }
         case 65: { // readv: sequential reads into the supplied vectors
             const fd = a[0], iov = a[1] >>> 0, cnt = a[2] | 0;
@@ -246,7 +441,9 @@ export async function runLinux(e, caller) {
                 if (base > uu.length || len > uu.length - base) return -14;
                 vectors.push([base, len]);
             }
-            if (!(streams[fd] ?? openFiles.get(fd)) && !(fd === 0 && stdinBytes !== null)) return -9;
+            const description = openFiles.get(fd);
+            if (description && !description.canRead()) return -9;
+            if (!(streams[fd] ?? description) && !(fd === 0 && stdinBytes !== null)) return -9;
             let total = 0;
             for (const [base, len] of vectors) {
                 if (!len) continue;
@@ -262,25 +459,42 @@ export async function runLinux(e, caller) {
             if (buf > uu.length || count > uu.length - buf) return -14;
             const handle = streams[fd] ?? openFiles.get(fd);
             if (!handle) return -9;
-            return handle.write(uu.subarray(buf, buf + count)) ?? 0;
+            return transfer(handle, "write", uu.subarray(buf, buf + count));
         }
         case 56: { // openat(dirfd, path, flags, mode)
             if (a[0] !== -100) return -9;
-            const uu = u(); let end = a[1] >>> 0;
+            const uu = u(), start = a[1] >>> 0;
+            if (!start || start >= uu.length) return -14;
+            let end = start;
             while (end < uu.length && uu[end] !== 0) end++;
-            const raw = new TextDecoder().decode(uu.subarray(a[1] >>> 0, end));
-            const p = raw.replace(/^\/+/, "");
-            if (p === "" || p.split("/").some(seg => seg === ".." || seg === "")) return -13;
-            // capability restriction: only the pre-authorized scratch file
-            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
-            if (p !== "out.txt" && !scratch) return -13;
-            const target = `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}`;
-            const created = caller.call("path_touch", { path: target });
-            if (created && created.__wanix_error) return -13;
-            const handle = new FileHandle(caller, target);
-            try { handle.open(); } catch (_) { return -13; }
+            if (end === uu.length) return -14;
+            const raw = new TextDecoder().decode(uu.subarray(start, end));
+            const name = admittedName(raw);
+            if (name === null) return -13;
+            const target = `${TASKNS}/${tid}/w/${name}`;
+            const flags = a[2] >>> 0, accessMode = flags & O_ACCMODE;
+            // APPEND and EXCL without CREATE are explicitly unsupported.
+            if ((flags & ~(O_ACCMODE | O_CREAT | O_EXCL | O_TRUNC | O_LARGEFILE)) || accessMode === O_ACCMODE) return -38;
+            const create = !!(flags & O_CREAT), exclusive = !!(flags & O_EXCL);
+            if (exclusive && !create) return -38;
+            if (create && (a[3] & ~0o777)) return -38;
+            // Capture once, synchronously, before any transport or suspension.
+            const perm = create ? (a[3] & 0o777) & ~currentUmask : 0;
+            const truncate = !!(flags & O_TRUNC);
+            if (truncate && accessMode === 0) return -22;
+            let opened;
+            try { opened = caller.call("path_open_existing", {
+                path: target, access: ["read", "write", "readwrite"][accessMode], create, exclusive, truncate, perm,
+                maxExistingSize: flags & O_LARGEFILE ? Number.MAX_SAFE_INTEGER : MAX_NON_LFS,
+            }); }
+            catch (err) { return -ioErrno(err); }
+            if (opened?.ok === false && Number.isInteger(opened.errno) &&
+                opened.errno > 0 && opened.errno <= 4095) return -opened.errno;
+            if (opened?.ok !== true || !Number.isSafeInteger(opened.fd) || opened.fd < 0) return -5;
+            const handle = new FileHandle(ioCaller, target);
+            handle.fd = opened.fd;
             const fd = nextFd++;
-            openFiles.set(fd, new FileDescription(handle));
+            openFiles.set(fd, new FileDescription(handle, accessMode));
             return fd;
         }
         case 63: { // read(fd, buf, count) — task-provided stdin text or streams
@@ -294,61 +508,125 @@ export async function runLinux(e, caller) {
             }
             const h = streams[fd] ?? openFiles.get(fd);
             if (!h) return -9;
-            const data = new Uint8Array(count);
-            const n = h.read(data);
+            const data = new Uint8Array(Math.min(count, maxRead));
+            const n = transfer(h, "read", data);
             if (n > 0) uu.set(data.subarray(0, n), buf);
             return n;
         }
         case 57: { const h = openFiles.get(a[0]); if (!h) return -9; h.close(); openFiles.delete(a[0]); return 0; }
-        case 62: { // _llseek(fd, off_hi, off_lo, result_ptr, whence) — open files only
+        case 62: { // _llseek(fd, off_hi, off_lo, result_ptr, whence)
+            // The positional backend uses safe Numbers, not full signed-64 offsets.
             const fd = a[0] | 0, off = (a[1] * 4294967296) + (a[2] >>> 0), res = a[3] >>> 0, whence = a[4] | 0;
             const h = openFiles.get(fd);
-            if (!h) return -9;
-            if (whence < 0 || whence > 2) return -22;
-            const uu = u(), vv = v();
-            if (res + 8 > uu.length) return -14;
+            const stream = streams[fd] || (fd === 0 && stdinBytes !== null);
+            if (!h && !stream) return -9;
+            // Linux checks SEEK_MAX before asking whether the descriptor seeks.
+            if (whence < 0 || whence > 4) return -22;
+            if (stream) return -29;
+            // DATA/HOLE remain unsupported by this regular-file adapter.
             const pos = h.seek(off, whence);
             if (pos < 0) return pos;
+            // Linux moves the position before copying the result to userspace.
+            const uu = u(), vv = v();
+            if (res + 8 > uu.length) return -14;
             vv.setBigUint64(res, BigInt(pos), true);
             return 0;
         }
-        case 291: { // statx(dirfd, path, flags, mask, buf) — minimal regular-file
-            const uu = u(), vv = v(), buf = a[3] >>> 0, pathPtr = (a[1] >>> 0);
-            let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
-            const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
-            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
-            if (p !== "out.txt" && !scratch) return -13;
-            if (buf + 256 > uu.length) return -14;
+        case 291: { // statx: task-local regular files, TYPE and SIZE only
+            const flags = a[2] >>> 0, mask = a[3] >>> 0;
+            if ((flags & ~0x7900) || (flags & 0x6000) === 0x6000 || (mask & 0x80000000)) return -22;
+            // Empty-path fd lookup and forced/cache-only sync are not implemented.
+            if (flags & 0x7000) return -38;
+            const uu = u(), buf = a[4] >>> 0, start = a[1] >>> 0;
+            if (!buf || buf > uu.length || 256 > uu.length - buf || !start || start >= uu.length) return -14;
+            let end = start;
+            while (end < uu.length && uu[end] !== 0) end++;
+            if (end === uu.length) return -14;
+            const raw = new TextDecoder().decode(uu.subarray(start, end));
+            if (!raw) return -2;
+            if (!raw.startsWith("/") && a[0] !== -100) {
+                return (streams[a[0]] || openFiles.has(a[0])) ? -20 : -9;
+            }
+            const path = raw.replace(/^\/+/, "");
+            if (!/^(?:out\.txt|(?:tmp\/)?tmpfile_[^/]+)$/.test(path)) return -13;
+            const name = path.startsWith("tmp/") ? path.slice(4) : path;
+            const result = caller.call("path_stat", {path: `${TASKNS}/${tid}/w/${name}`, nofollow: !!(flags & 0x100)});
+            if (!result || result.ok !== true) return -(result?.errno || 5);
+            const stat = result.stat;
+            if (!stat || !Number.isInteger(stat.Mode) || typeof stat.IsDir !== "boolean") return -5;
+            if (stat.IsDir || (stat.Mode & 0xf000) !== 0x8000) return -38;
+            if (typeof stat.Size !== "number" || !Number.isFinite(stat.Size) || stat.Size < 0 || !Number.isInteger(stat.Size)) return -5;
+            // JSON RPC supplies numbers, so larger sizes cannot be trusted losslessly.
+            if (!Number.isSafeInteger(stat.Size)) return -75;
             uu.fill(0, buf, buf + 256);
-            vv.setUint32(buf + 0, 0x7ff, true);
-            vv.setUint32(buf + 4, 4096, true);
-            vv.setUint32(buf + 12, 1, true);
-            vv.setUint32(buf + 24, 33188, true);
-            vv.setBigUint64(buf + 28, 42n, true);
-            const size = Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
-            vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
+            const vv = v();
+            vv.setUint32(buf, 0x201, true);
+            vv.setUint16(buf + 28, stat.Mode & 0xf000, true);
+            vv.setBigUint64(buf + 40, BigInt(stat.Size), true);
             return 0;
         }
-        case 35: // asm-generic unlinkat(dirfd, path, flags); no legacy unlink syscall
-            // No Linux unlink backend is wired through messageHandler. Do not
-            // report deletion or use path_touch/truncate as a substitute: open
-            // descriptions must survive removal of the directory entry.
-            // This includes flags == 0 and AT_REMOVEDIR (0x200).
-            return -38; // ENOSYS until removal and open-file lifetime are supported
+        case 35: { // asm-generic unlinkat; narrowly admitted task-local regular files
+            if (a[2] & ~0x200) return -22; // EINVAL: unknown flags
+            if (a[2] === 0x200) return -38; // AT_REMOVEDIR is not implemented
+            const uu = u(), start = a[1] >>> 0;
+            if (start >= uu.length) return -14;
+            let end = start;
+            while (end < uu.length && uu[end] !== 0) end++;
+            if (end === uu.length) return -14;
+            const raw = new TextDecoder().decode(uu.subarray(start, end));
+            if (!raw) return -2;
+            if (!raw.startsWith("/") && a[0] !== -100) return -9;
+            const p = raw.replace(/^\/+/, "");
+            if (p.split("/").some(seg => seg === ".." || seg === "." || seg === "")) return -13;
+            const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
+            if (p !== "out.txt" && !scratch) return -13;
+            const target = `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}`;
+            const result = caller.call("path_remove", { path: target });
+            return result?.ok === true ? 0 : -(result?.errno || 5);
+        }
         case 29: return -25;        // ioctl: ENOTTY
         case 96: return 4242;       // set_tid_address
-        case 214: return a[0] | 0;  // brk (diagnostic)
-        case 222: { // diagnostic anonymous arena; file mappings are unsupported
-            const len = a[1] >>> 0, flags = a[3] | 0, fd = a[4] | 0;
-            if (!(flags & 0x20) || fd !== -1) return -38;
-            const m = inst.exports.memory;
-            const pages = Math.ceil(Math.max(len, 1) / 65536);
-            const basePages = m.buffer.byteLength / 65536;
-            if (basePages + pages > memoryBytes / 65536) return -12;
-            m.grow(pages);
-            return basePages * 65536;
+        case 166: { // asm-generic umask; Linux v6.12 kernel/sys.c:1906-1910
+            const previous = currentUmask;
+            currentUmask = a[0] & 0o777;
+            return previous;
         }
-        case 226: case 215: return 0;
+        case 214: return -38; // brk: no loader-owned break base; explicitly unsupported
+        case 222: { // Bounded diagnostic RW arena, not Linux virtual memory.
+            const len = a[1] >>> 0, flags = a[3] >>> 0;
+            if (!len || (a[5] & 4095)) return -22;
+            const type = flags & 3;
+            if (!type) return -22;
+            // Nonfixed addresses are ignored hints. fd=-1 and offset=0 are
+            // shim restrictions; ENOSYS here is not native Linux policy.
+            if (a[2] !== 3 || flags !== 0x22 || a[4] !== -1 || a[5] !== 0) return -38;
+            const size = Math.ceil(len / 4096) * 4096;
+            if (size >= 2 ** 32 || arenaNext > memoryBytes || size > memoryBytes - arenaNext) return -12;
+            const end = arenaNext + size, m = inst.exports.memory;
+            const pages = Math.max(0, Math.ceil((end - m.buffer.byteLength) / 65536));
+            if (pages) {
+                try { m.grow(pages); }
+                catch (err) { if (err instanceof RangeError) return -12; throw err; }
+            }
+            const base = arenaNext;
+            new Uint8Array(m.buffer).fill(0, base, end);
+            arenaNext = end;
+            return base;
+        }
+        case 215: { // No inaccessible holes can be enforced in linear memory.
+            const start = a[0] >>> 0, len = a[1] >>> 0;
+            if ((start & 4095) || !len) return -22;
+            const size = Math.ceil(len / 4096) * 4096;
+            if (size > 2 ** 32 - start) return -22;
+            return -38;
+        }
+        case 226: { // Basic checks only; even zero-length requests are unsupported.
+            const start = a[0] >>> 0, len = a[1] >>> 0;
+            if ((start & 4095) || (a[2] & ~7)) return -22;
+            const size = Math.ceil(len / 4096) * 4096;
+            if (size > 2 ** 32 - start) return -12;
+            return -38;
+        }
         case 93: case 94: exitCode = a[0] & 255; throw { kind: "exit" };
         default: return -38;
         }
@@ -359,6 +637,7 @@ export async function runLinux(e, caller) {
     const m = inst.exports.memory;
     const basePages = m.buffer.byteLength / 65536;
     m.grow(2);
+    arenaNext = m.buffer.byteLength;
     const stackPtr = buildInitialStack(m, basePages * 65536, 2 * 65536, argv, envp);
     try {
         inst.exports._start(stackPtr);
