@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { exactStatSize } from "./statx-core.js";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const source = await readFile(new URL("./worker.js", import.meta.url), "utf8");
-assert.equal(hash(source), "59d320862d709cda96b4dd14c76c73240e6845afc1da6f723d527b9151aa15ac");
+assert.equal(hash(source), "275f4b1a47d400ab81f5dfd159f486990aaf55a92ad7dec009aa15f4671fea34");
 const startMarker = "function messageHandler(";
 const endMarker = "\nfunction extractWasm(";
 assert.equal(source.split(startMarker).length, 2);
@@ -15,9 +15,9 @@ const start = source.indexOf(startMarker);
 const separator = source.indexOf(endMarker, start);
 // Include the one LF separator in the RAW pin; never trim source.
 const closure = source.slice(start, separator + 1);
-assert.equal(hash(closure), "0f510a8fabb105c9918710a4128d1e6edf79ec65d92440b6feab6b94a1cadcd4");
+assert.equal(hash(closure), "76ac02585ced691b100829ed05f3121bb5fbc0b6ba3394af63afd8f29ff7dd6c");
 const core = await readFile(new URL("./statx-core.js", import.meta.url));
-assert.equal(hash(core), "3c326cd967e23f92100962b42976b26c4c03bcdf34817f06487749f6c169bd6c");
+assert.equal(hash(core), "fd21146cbc717730aaa0df503c8aa4f9ab80e37cca63a885eef4aa3d41d157c4");
 // The closure references module-scope helpers; stubs below satisfy those
 // references (the raw pins above bind the real definitions). Host Error
 // injection keeps the actual instanceof Error branch agreeing with host fakes.

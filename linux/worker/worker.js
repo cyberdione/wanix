@@ -1,4 +1,4 @@
-import { exactStatSize, copySizeStatx, validBackendFD, fdStatSize } from "./statx-core.js";
+import { exactStatSize, copySizeStatx, validBackendFD, fdStatSize, fstatBrokerResult, filesystemErrnos } from "./statx-core.js";
 import { WanixHandle, CallBuffer, FileHandle } from "./lib.js";
 import { FileDescription } from "./file-description.js";
 
@@ -37,9 +37,6 @@ function taskFile(path, tid) {
     const name = path.slice(prefix.length);
     return !name.includes("/") && admittedName(name) === name;
 }
-
-const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EACCES: 13,
-    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40, EOVERFLOW: 75});
 
 async function filesystemValue(fs, method, path) {
     const result = await fs[method](path);
@@ -220,9 +217,13 @@ export function messageHandler(fs, call, tid) {
                 break;
             }
             case "fd_stat_size": {
-                if (!validBackendFD(e.data.fd)) throw new Error("invalid backend fd");
-                const stat = await fs.fstat(e.data.fd);
-                call.respond(exactStatSize(stat));
+                if (!validBackendFD(e.data.fd)) { call.respond({ok:false,errno:22}); break; }
+                try {
+                    const result = await fs.fstatResult(e.data.fd);
+                    call.respond(fstatBrokerResult(result));
+                } catch (_) {
+                    call.respond({ok:false,errno:5});
+                }
                 break;
             }
             case "path_size": {
