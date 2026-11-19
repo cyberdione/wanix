@@ -30,6 +30,8 @@ func filesystemCode(err error) string {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		switch errno {
+		case syscall.EBADF:
+			return "EBADF"
 		case syscall.ENOSYS:
 			return "ENOSYS"
 		case syscall.ENOENT:
@@ -132,6 +134,31 @@ func (s *syscaller) returnStatResult(r rpc.Responder, c *rpc.Call, nofollow bool
 	} else {
 		fi, err = fs.Stat(s.task.NS(), path)
 	}
+	if err != nil {
+		_ = r.Return(failedFilesystemResult[statValue](err))
+		return
+	}
+	value := statValue{Size: fi.Size(), Mode: pstat.FileModeToUnixMode(fi.Mode()), IsDir: fs.IsDirInfo(fi), ModTime: fi.ModTime()}
+	_ = r.Return(filesystemResult[statValue]{OK: true, Value: &value})
+}
+
+func (s *syscaller) fstatResult(r rpc.Responder, c *rpc.Call) {
+	var args []any
+	if err := c.Receive(&args); err != nil || len(args) != 1 {
+		_ = r.Return(failedFilesystemResult[statValue](syscall.EINVAL))
+		return
+	}
+	fd, ok := args[0].(uint64)
+	if !ok || fd > 0xffffffff {
+		_ = r.Return(failedFilesystemResult[statValue](syscall.EINVAL))
+		return
+	}
+	f, _, err := s.task.FD(int(fd))
+	if err != nil {
+		_ = r.Return(failedFilesystemResult[statValue](syscall.EBADF))
+		return
+	}
+	fi, err := f.Stat()
 	if err != nil {
 		_ = r.Return(failedFilesystemResult[statValue](err))
 		return

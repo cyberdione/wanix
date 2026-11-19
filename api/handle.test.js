@@ -229,3 +229,20 @@ test("optional existing size ceiling is exact over real CBOR while legacy remain
     assert.equal(calls.length,0);
     await h.openFileResult("x","read");assert.equal(Object.keys(calls[0][1]).length,6);
 });
+
+test("fstatResult forwards fd and passes typed envelopes through real duplex CBOR", async () => {
+    const calls = [];
+    const ok = await codecRoundtrip({ OK: true, Value: { Size: 37, Mode: 0o100600, IsDir: false, ModTime: 1700000000 } });
+    assert.deepEqual(await resultHandle(ok, calls).fstatResult(7), ok);
+    assert.deepEqual(calls, [["FstatResult", [7]]]);
+    const typedFailure = await codecRoundtrip({ OK: false, Error: { Code: "EBADF" } });
+    assert.deepEqual(await resultHandle(typedFailure).fstatResult(7), { OK: false, Error: { Code: "EBADF" } });
+});
+
+test("fstatResult rejects malformed envelopes locally without retry", async () => {
+    for (const value of [{ OK: false, Error: { Code: "unknown" } },
+        { OK: true, Value: { Size: 2 ** 53, Mode: 0, IsDir: false, ModTime: 0 } },
+        { OK: false, Value: 0, Error: { Code: "EBADF" } }]) {
+        await assert.rejects(resultHandle(value).fstatResult(7), FilesystemResultProtocolError);
+    }
+});

@@ -30,9 +30,9 @@ var __toESM = (mod, isNodeMode, target2) => (target2 = mod != null ? __create(__
   mod
 ));
 
-// ../wanix-ferrule-stdio/node_modules/ws/browser.js
+// node_modules/ws/browser.js
 var require_browser = __commonJS({
-  "../wanix-ferrule-stdio/node_modules/ws/browser.js"(exports, module) {
+  "node_modules/ws/browser.js"(exports, module) {
     "use strict";
     module.exports = function() {
       throw new Error(
@@ -42,7 +42,7 @@ var require_browser = __commonJS({
   }
 });
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/json.js
+// node_modules/@progrium/duplex/esm/codec/json.js
 (function() {
   if (typeof global !== "undefined" && !global.TextEncoder) {
     const { TextEncoder: TextEncoder2, TextDecoder: TextDecoder2 } = __require("util");
@@ -51,7 +51,7 @@ var require_browser = __commonJS({
   }
 })();
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js
+// node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js
 var decoder;
 try {
   decoder = new TextDecoder();
@@ -1065,7 +1065,7 @@ var FLOAT32_OPTIONS = {
   DECIMAL_FIT: 4
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/encode.js
+// node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/encode.js
 var textEncoder;
 try {
   textEncoder = new TextEncoder();
@@ -2241,7 +2241,7 @@ var REUSE_BUFFER_MODE = 512;
 var RESET_BUFFER_MODE = 1024;
 var THROW_ON_ITERABLE = 2048;
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/cbor.js
+// node_modules/@progrium/duplex/esm/codec/cbor.js
 var CBORCodec = class {
   constructor(debug2 = false, extensions2) {
     Object.defineProperty(this, "debug", {
@@ -2325,7 +2325,7 @@ var CBORDecoder = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/buffer.js
+// node_modules/@progrium/duplex/esm/buffer.js
 function copy(src2, dst, off = 0) {
   off = Math.max(0, Math.min(off, dst.byteLength));
   const dstBytesAvailable = dst.byteLength - off;
@@ -2530,7 +2530,7 @@ var Buffer3 = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/frame.js
+// node_modules/@progrium/duplex/esm/codec/frame.js
 var FrameCodec = class {
   constructor(codec) {
     Object.defineProperty(this, "codec", {
@@ -2609,7 +2609,7 @@ var FrameDecoder = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/client.js
+// node_modules/@progrium/duplex/esm/rpc/client.js
 var Client = class {
   constructor(session, codec) {
     Object.defineProperty(this, "session", {
@@ -2670,7 +2670,7 @@ function VirtualCaller(caller) {
   return pathBuilder("", caller.call.bind(caller));
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/handler.js
+// node_modules/@progrium/duplex/esm/rpc/handler.js
 function HandlerFunc(fn) {
   return { respondRPC: fn };
 }
@@ -2754,7 +2754,7 @@ var RespondMux = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/responder.js
+// node_modules/@progrium/duplex/esm/rpc/responder.js
 async function Respond(ch, codec, handler) {
   const framer = new FrameCodec(codec);
   const dec = framer.decoder(ch);
@@ -2829,7 +2829,7 @@ var responder = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/mod.js
+// node_modules/@progrium/duplex/esm/rpc/mod.js
 var Call = class {
   constructor(selector, channel, decoder2) {
     Object.defineProperty(this, "selector", {
@@ -2927,7 +2927,7 @@ var Response2 = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/fn/proxy.js
+// node_modules/@progrium/duplex/esm/fn/proxy.js
 function methodProxy(caller) {
   function pathBuilder(path, callable) {
     return new Proxy(Object.assign(() => {
@@ -2945,7 +2945,7 @@ function methodProxy(caller) {
   return pathBuilder("", caller.call.bind(caller));
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/peer/peer.js
+// node_modules/@progrium/duplex/esm/peer/peer.js
 var Peer = class {
   constructor(session, codec) {
     Object.defineProperty(this, "session", {
@@ -3007,7 +3007,7 @@ var Peer = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/message.js
+// node_modules/@progrium/duplex/esm/mux/codec/message.js
 var OpenID = 100;
 var OpenConfirmID = 101;
 var OpenFailureID = 102;
@@ -3025,7 +3025,7 @@ var payloadSizes = /* @__PURE__ */ new Map([
   [CloseID, 4]
 ]);
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/encoder.js
+// node_modules/@progrium/duplex/esm/mux/codec/encoder.js
 var Encoder2 = class {
   constructor(w) {
     Object.defineProperty(this, "w", {
@@ -3114,7 +3114,7 @@ function Marshal(obj) {
   throw `marshal of unknown type: ${obj}`;
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/util.js
+// node_modules/@progrium/duplex/esm/mux/util.js
 function concat(list, totalLength) {
   const buf = new Uint8Array(totalLength);
   let offset = 0;
@@ -3260,7 +3260,7 @@ var ReadBuffer = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/decoder.js
+// node_modules/@progrium/duplex/esm/mux/codec/decoder.js
 var Decoder2 = class {
   constructor(r) {
     Object.defineProperty(this, "r", {
@@ -3373,13 +3373,13 @@ function Unmarshal(packet) {
   }
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/mod.js
+// node_modules/@progrium/duplex/esm/mux/codec/mod.js
 var debug = {
   messages: false,
   bytes: false
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/session/session.js
+// node_modules/@progrium/duplex/esm/mux/session/session.js
 var minPacketLength = 9;
 var maxPacketLength = Number.MAX_VALUE;
 var Session = class {
@@ -3543,7 +3543,7 @@ var Session = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/session/channel.js
+// node_modules/@progrium/duplex/esm/mux/session/channel.js
 var channelMaxPacket = 1 << 24;
 var channelWindowSize = 64 * channelMaxPacket;
 var Channel = class {
@@ -3792,7 +3792,7 @@ var Channel = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/_dnt.shims.js
+// node_modules/@progrium/duplex/esm/_dnt.shims.js
 var import_ws = __toESM(require_browser(), 1);
 var import_ws2 = __toESM(require_browser(), 1);
 var dntGlobals = {
@@ -3853,7 +3853,7 @@ function createMergeProxy(baseObj, extObj) {
   });
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/transport/messageport.js
+// node_modules/@progrium/duplex/esm/transport/messageport.js
 var Conn = class {
   constructor(port) {
     Object.defineProperty(this, "port", {
@@ -3947,6 +3947,7 @@ var FilesystemResultProtocolError = class extends Error {
   }
 };
 var filesystemCodes = /* @__PURE__ */ new Set([
+  "EBADF",
   "ENOENT",
   "EACCES",
   "EPERM",
@@ -4131,6 +4132,9 @@ var WanixHandle = class {
   async sync(fd) {
     this.logger(`sync ${fd}`);
     return (await this.peer.call("Sync", [fd])).value;
+  }
+  async fstatResult(fd) {
+    return validateResult((await this.peer.call("FstatResult", [fd])).value, validStat);
   }
   async fstat(fd) {
     this.logger(`fstat ${fd}`);

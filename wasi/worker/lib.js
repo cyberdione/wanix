@@ -13,9 +13,9 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 var __commonJS = (cb, mod) => function __require2() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
-var __export = (target3, all) => {
+var __export = (target2, all) => {
   for (var name in all)
-    __defProp(target3, name, { get: all[name], enumerable: true });
+    __defProp(target2, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -25,18 +25,2366 @@ var __copyProps = (to, from, except, desc) => {
   }
   return to;
 };
-var __toESM = (mod, isNodeMode, target3) => (target3 = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+var __toESM = (mod, isNodeMode, target2) => (target2 = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
   // If the importer is in node compatibility mode or this is not an ESM
   // file that has been converted to a CommonJS file using a Babel-
   // compatible transform (i.e. "__esModule" has not been set), then set
   // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target3, "default", { value: mod, enumerable: true }) : target3,
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target2, "default", { value: mod, enumerable: true }) : target2,
   mod
 ));
 
-// ../wanix-ferrule-stdio/node_modules/ws/browser.js
+// node_modules/cbor-x/dist/index-no-eval.cjs
+var require_index_no_eval = __commonJS({
+  "node_modules/cbor-x/dist/index-no-eval.cjs"(exports, module) {
+    (function(global2, factory) {
+      typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : typeof define === "function" && define.amd ? define(["exports"], factory) : (global2 = typeof globalThis !== "undefined" ? globalThis : global2 || self, factory(global2.CBOR = {}));
+    })(exports, (function(exports2) {
+      "use strict";
+      let decoder2;
+      try {
+        decoder2 = new TextDecoder();
+      } catch (error) {
+      }
+      let src2;
+      let srcEnd2;
+      let position$1 = 0;
+      const LEGACY_RECORD_INLINE_ID2 = 105;
+      const RECORD_DEFINITIONS_ID2 = 57342;
+      const RECORD_INLINE_ID2 = 57343;
+      const BUNDLED_STRINGS_ID2 = 57337;
+      const PACKED_REFERENCE_TAG_ID2 = 6;
+      const STOP_CODE2 = {};
+      let maxArraySize = 11281e4;
+      let maxMapSize = 1681e4;
+      let currentDecoder2 = {};
+      let currentStructures2;
+      let srcString2;
+      let srcStringStart2 = 0;
+      let srcStringEnd2 = 0;
+      let bundledStrings$1;
+      let referenceMap2;
+      let currentExtensions2 = [];
+      let currentExtensionRanges2 = [];
+      let packedValues2;
+      let dataView2;
+      let restoreMapsAsObject2;
+      let defaultOptions2 = {
+        useRecords: false,
+        mapsAsObjects: true
+      };
+      let sequentialMode2 = false;
+      let inlineObjectReadThreshold = 2;
+      var BlockedFunction;
+      try {
+        new BlockedFunction("");
+      } catch (error) {
+        inlineObjectReadThreshold = Infinity;
+      }
+      class Decoder3 {
+        constructor(options) {
+          if (options) {
+            if ((options.keyMap || options._keyMap) && !options.useRecords) {
+              options.useRecords = false;
+              options.mapsAsObjects = true;
+            }
+            if (options.useRecords === false && options.mapsAsObjects === void 0)
+              options.mapsAsObjects = true;
+            if (options.getStructures)
+              options.getShared = options.getStructures;
+            if (options.getShared && !options.structures)
+              (options.structures = []).uninitialized = true;
+            if (options.keyMap) {
+              this.mapKey = /* @__PURE__ */ new Map();
+              for (let [k, v] of Object.entries(options.keyMap)) this.mapKey.set(v, k);
+            }
+          }
+          Object.assign(this, options);
+        }
+        /*
+        decodeKey(key) {
+        	return this.keyMap
+        		? Object.keys(this.keyMap)[Object.values(this.keyMap).indexOf(key)] || key
+        		: key
+        }
+        */
+        decodeKey(key) {
+          return this.keyMap ? this.mapKey.get(key) || key : key;
+        }
+        encodeKey(key) {
+          return this.keyMap && this.keyMap.hasOwnProperty(key) ? this.keyMap[key] : key;
+        }
+        encodeKeys(rec) {
+          if (!this._keyMap) return rec;
+          let map = /* @__PURE__ */ new Map();
+          for (let [k, v] of Object.entries(rec)) map.set(this._keyMap.hasOwnProperty(k) ? this._keyMap[k] : k, v);
+          return map;
+        }
+        decodeKeys(map) {
+          if (!this._keyMap || map.constructor.name != "Map") return map;
+          if (!this._mapKey) {
+            this._mapKey = /* @__PURE__ */ new Map();
+            for (let [k, v] of Object.entries(this._keyMap)) this._mapKey.set(v, k);
+          }
+          let res = {};
+          map.forEach((v, k) => res[safeKey2(this._mapKey.has(k) ? this._mapKey.get(k) : k)] = v);
+          return res;
+        }
+        mapDecode(source, end) {
+          let res = this.decode(source);
+          if (this._keyMap) {
+            switch (res.constructor.name) {
+              case "Array":
+                return res.map((r) => this.decodeKeys(r));
+            }
+          }
+          return res;
+        }
+        decode(source, end) {
+          if (src2) {
+            return saveState2(() => {
+              clearSource2();
+              return this ? this.decode(source, end) : Decoder3.prototype.decode.call(defaultOptions2, source, end);
+            });
+          }
+          srcEnd2 = end > -1 ? end : source.length;
+          position$1 = 0;
+          srcStringEnd2 = 0;
+          srcString2 = null;
+          bundledStrings$1 = null;
+          src2 = source;
+          try {
+            dataView2 = source.dataView || (source.dataView = new DataView(source.buffer, source.byteOffset, source.byteLength));
+          } catch (error) {
+            src2 = null;
+            if (source instanceof Uint8Array)
+              throw error;
+            throw new Error("Source must be a Uint8Array or Buffer but was a " + (source && typeof source == "object" ? source.constructor.name : typeof source));
+          }
+          if (this instanceof Decoder3) {
+            currentDecoder2 = this;
+            packedValues2 = this.sharedValues && (this.pack ? new Array(this.maxPrivatePackedValues || 16).concat(this.sharedValues) : this.sharedValues);
+            if (this.structures) {
+              currentStructures2 = this.structures;
+              return checkedRead2();
+            } else if (!currentStructures2 || currentStructures2.length > 0) {
+              currentStructures2 = [];
+            }
+          } else {
+            currentDecoder2 = defaultOptions2;
+            if (!currentStructures2 || currentStructures2.length > 0)
+              currentStructures2 = [];
+            packedValues2 = null;
+          }
+          return checkedRead2();
+        }
+        decodeMultiple(source, forEach) {
+          let values, lastPosition = 0;
+          try {
+            let size = source.length;
+            sequentialMode2 = true;
+            let value = this ? this.decode(source, size) : defaultDecoder2.decode(source, size);
+            if (forEach) {
+              if (forEach(value) === false) {
+                return;
+              }
+              while (position$1 < size) {
+                lastPosition = position$1;
+                if (forEach(checkedRead2()) === false) {
+                  return;
+                }
+              }
+            } else {
+              values = [value];
+              while (position$1 < size) {
+                lastPosition = position$1;
+                values.push(checkedRead2());
+              }
+              return values;
+            }
+          } catch (error) {
+            error.lastPosition = lastPosition;
+            error.values = values;
+            throw error;
+          } finally {
+            sequentialMode2 = false;
+            clearSource2();
+          }
+        }
+      }
+      function checkedRead2() {
+        try {
+          let result = read2();
+          if (bundledStrings$1) {
+            if (position$1 >= bundledStrings$1.postBundlePosition) {
+              let error = new Error("Unexpected bundle position");
+              error.incomplete = true;
+              throw error;
+            }
+            position$1 = bundledStrings$1.postBundlePosition;
+            bundledStrings$1 = null;
+          }
+          if (position$1 == srcEnd2) {
+            currentStructures2 = null;
+            src2 = null;
+            if (referenceMap2)
+              referenceMap2 = null;
+          } else if (position$1 > srcEnd2) {
+            let error = new Error("Unexpected end of CBOR data");
+            error.incomplete = true;
+            throw error;
+          } else if (!sequentialMode2) {
+            throw new Error("Data read, but end of buffer not reached");
+          }
+          return result;
+        } catch (error) {
+          clearSource2();
+          if (error instanceof RangeError || error.message.startsWith("Unexpected end of buffer")) {
+            error.incomplete = true;
+          }
+          throw error;
+        }
+      }
+      function read2() {
+        let token = src2[position$1++];
+        let majorType = token >> 5;
+        token = token & 31;
+        if (token > 23) {
+          switch (token) {
+            case 24:
+              token = src2[position$1++];
+              break;
+            case 25:
+              if (majorType == 7) {
+                return getFloat162();
+              }
+              token = dataView2.getUint16(position$1);
+              position$1 += 2;
+              break;
+            case 26:
+              if (majorType == 7) {
+                let value = dataView2.getFloat32(position$1);
+                if (currentDecoder2.useFloat32 > 2) {
+                  let multiplier = mult102[(src2[position$1] & 127) << 1 | src2[position$1 + 1] >> 7];
+                  position$1 += 4;
+                  return (multiplier * value + (value > 0 ? 0.5 : -0.5) >> 0) / multiplier;
+                }
+                position$1 += 4;
+                return value;
+              }
+              token = dataView2.getUint32(position$1);
+              position$1 += 4;
+              break;
+            case 27:
+              if (majorType == 7) {
+                let value = dataView2.getFloat64(position$1);
+                position$1 += 8;
+                return value;
+              }
+              if (majorType > 1) {
+                if (dataView2.getUint32(position$1) > 0)
+                  throw new Error("JavaScript does not support arrays, maps, or strings with length over 4294967295");
+                token = dataView2.getUint32(position$1 + 4);
+              } else if (currentDecoder2.int64AsNumber) {
+                token = dataView2.getUint32(position$1) * 4294967296;
+                token += dataView2.getUint32(position$1 + 4);
+              } else
+                token = dataView2.getBigUint64(position$1);
+              position$1 += 8;
+              break;
+            case 31:
+              switch (majorType) {
+                case 2:
+                // byte string
+                case 3:
+                  throw new Error("Indefinite length not supported for byte or text strings");
+                case 4:
+                  let array = [];
+                  let value, i = 0;
+                  while ((value = read2()) != STOP_CODE2) {
+                    if (i >= maxArraySize) throw new Error(`Array length exceeds ${maxArraySize}`);
+                    array[i++] = value;
+                  }
+                  return majorType == 4 ? array : majorType == 3 ? array.join("") : Buffer.concat(array);
+                case 5:
+                  let key;
+                  if (currentDecoder2.mapsAsObjects) {
+                    let object = {};
+                    let i2 = 0;
+                    if (currentDecoder2.keyMap) {
+                      while ((key = read2()) != STOP_CODE2) {
+                        if (i2++ >= maxMapSize) throw new Error(`Property count exceeds ${maxMapSize}`);
+                        object[safeKey2(currentDecoder2.decodeKey(key))] = read2();
+                      }
+                    } else {
+                      while ((key = read2()) != STOP_CODE2) {
+                        if (i2++ >= maxMapSize) throw new Error(`Property count exceeds ${maxMapSize}`);
+                        object[safeKey2(key)] = read2();
+                      }
+                    }
+                    return object;
+                  } else {
+                    if (restoreMapsAsObject2) {
+                      currentDecoder2.mapsAsObjects = true;
+                      restoreMapsAsObject2 = false;
+                    }
+                    let map = /* @__PURE__ */ new Map();
+                    if (currentDecoder2.keyMap) {
+                      let i2 = 0;
+                      while ((key = read2()) != STOP_CODE2) {
+                        if (i2++ >= maxMapSize) {
+                          throw new Error(`Map size exceeds ${maxMapSize}`);
+                        }
+                        map.set(currentDecoder2.decodeKey(key), read2());
+                      }
+                    } else {
+                      let i2 = 0;
+                      while ((key = read2()) != STOP_CODE2) {
+                        if (i2++ >= maxMapSize) {
+                          throw new Error(`Map size exceeds ${maxMapSize}`);
+                        }
+                        map.set(key, read2());
+                      }
+                    }
+                    return map;
+                  }
+                case 7:
+                  return STOP_CODE2;
+                default:
+                  throw new Error("Invalid major type for indefinite length " + majorType);
+              }
+            default:
+              throw new Error("Unknown token " + token);
+          }
+        }
+        switch (majorType) {
+          case 0:
+            return token;
+          case 1:
+            return ~token;
+          case 2:
+            return readBin2(token);
+          case 3:
+            if (srcStringEnd2 >= position$1) {
+              return srcString2.slice(position$1 - srcStringStart2, (position$1 += token) - srcStringStart2);
+            }
+            if (srcStringEnd2 == 0 && srcEnd2 < 140 && token < 32) {
+              let string = token < 16 ? shortStringInJS2(token) : longStringInJS2(token);
+              if (string != null)
+                return string;
+            }
+            return readFixedString2(token);
+          case 4:
+            if (token >= maxArraySize) throw new Error(`Array length exceeds ${maxArraySize}`);
+            let array = new Array(token);
+            for (let i = 0; i < token; i++) array[i] = read2();
+            return array;
+          case 5:
+            if (token >= maxMapSize) throw new Error(`Map size exceeds ${maxArraySize}`);
+            if (currentDecoder2.mapsAsObjects) {
+              let object = {};
+              if (currentDecoder2.keyMap) for (let i = 0; i < token; i++) object[safeKey2(currentDecoder2.decodeKey(read2()))] = read2();
+              else for (let i = 0; i < token; i++) object[safeKey2(read2())] = read2();
+              return object;
+            } else {
+              if (restoreMapsAsObject2) {
+                currentDecoder2.mapsAsObjects = true;
+                restoreMapsAsObject2 = false;
+              }
+              let map = /* @__PURE__ */ new Map();
+              if (currentDecoder2.keyMap) for (let i = 0; i < token; i++) map.set(currentDecoder2.decodeKey(read2()), read2());
+              else for (let i = 0; i < token; i++) map.set(read2(), read2());
+              return map;
+            }
+          case 6:
+            if (token >= BUNDLED_STRINGS_ID2) {
+              let structure = currentStructures2[token & 8191];
+              if (structure) {
+                if (!structure.read) structure.read = createStructureReader2(structure);
+                return structure.read();
+              }
+              if (token < 65536) {
+                if (token == RECORD_INLINE_ID2) {
+                  let length = readJustLength2();
+                  let id = read2();
+                  let structure2 = read2();
+                  recordDefinition2(id, structure2);
+                  let object = {};
+                  if (currentDecoder2.keyMap) for (let i = 2; i < length; i++) {
+                    let key = currentDecoder2.decodeKey(structure2[i - 2]);
+                    object[safeKey2(key)] = read2();
+                  }
+                  else for (let i = 2; i < length; i++) {
+                    let key = structure2[i - 2];
+                    object[safeKey2(key)] = read2();
+                  }
+                  return object;
+                } else if (token == RECORD_DEFINITIONS_ID2) {
+                  let length = readJustLength2();
+                  let id = read2();
+                  for (let i = 2; i < length; i++) {
+                    recordDefinition2(id++, read2());
+                  }
+                  return read2();
+                } else if (token == BUNDLED_STRINGS_ID2) {
+                  return readBundleExt2();
+                }
+                if (currentDecoder2.getShared) {
+                  loadShared2();
+                  structure = currentStructures2[token & 8191];
+                  if (structure) {
+                    if (!structure.read)
+                      structure.read = createStructureReader2(structure);
+                    return structure.read();
+                  }
+                }
+              }
+            }
+            let extension = currentExtensions2[token];
+            if (extension) {
+              if (extension.handlesRead)
+                return extension(read2);
+              else
+                return extension(read2());
+            } else {
+              let input = read2();
+              for (let i = 0; i < currentExtensionRanges2.length; i++) {
+                let value = currentExtensionRanges2[i](token, input);
+                if (value !== void 0)
+                  return value;
+              }
+              return new Tag2(input, token);
+            }
+          case 7:
+            switch (token) {
+              case 20:
+                return false;
+              case 21:
+                return true;
+              case 22:
+                return null;
+              case 23:
+                return;
+              // undefined
+              case 31:
+              default:
+                let packedValue = (packedValues2 || getPackedValues2())[token];
+                if (packedValue !== void 0)
+                  return packedValue;
+                throw new Error("Unknown token " + token);
+            }
+          default:
+            if (isNaN(token)) {
+              let error = new Error("Unexpected end of CBOR data");
+              error.incomplete = true;
+              throw error;
+            }
+            throw new Error("Unknown CBOR token " + token);
+        }
+      }
+      const validName = /^[a-zA-Z_$][a-zA-Z\d_$]*$/;
+      function createStructureReader2(structure) {
+        if (!structure) throw new Error("Structure is required in record definition");
+        function readObject() {
+          let length = src2[position$1++];
+          length = length & 31;
+          if (length > 23) {
+            switch (length) {
+              case 24:
+                length = src2[position$1++];
+                break;
+              case 25:
+                length = dataView2.getUint16(position$1);
+                position$1 += 2;
+                break;
+              case 26:
+                length = dataView2.getUint32(position$1);
+                position$1 += 4;
+                break;
+              default:
+                throw new Error("Expected array header, but got " + src2[position$1 - 1]);
+            }
+          }
+          let compiledReader = this.compiledReader;
+          while (compiledReader) {
+            if (compiledReader.propertyCount === length)
+              return compiledReader(read2);
+            compiledReader = compiledReader.next;
+          }
+          if (this.slowReads++ >= inlineObjectReadThreshold) {
+            let array = this.length == length ? this : this.slice(0, length);
+            compiledReader = currentDecoder2.keyMap ? new BlockedFunction("r", "return {" + array.map((k) => currentDecoder2.decodeKey(k)).map((k) => validName.test(k) ? safeKey2(k) + ":r()" : "[" + JSON.stringify(k) + "]:r()").join(",") + "}") : new BlockedFunction("r", "return {" + array.map((key) => validName.test(key) ? safeKey2(key) + ":r()" : "[" + JSON.stringify(key) + "]:r()").join(",") + "}");
+            if (this.compiledReader)
+              compiledReader.next = this.compiledReader;
+            compiledReader.propertyCount = length;
+            this.compiledReader = compiledReader;
+            return compiledReader(read2);
+          }
+          let object = {};
+          if (currentDecoder2.keyMap) for (let i = 0; i < length; i++) object[safeKey2(currentDecoder2.decodeKey(this[i]))] = read2();
+          else for (let i = 0; i < length; i++) {
+            object[safeKey2(this[i])] = read2();
+          }
+          return object;
+        }
+        structure.slowReads = 0;
+        return readObject;
+      }
+      function safeKey2(key) {
+        if (typeof key === "string") return key === "__proto__" ? "__proto_" : key;
+        if (typeof key === "number" || typeof key === "boolean" || typeof key === "bigint") return key.toString();
+        if (key == null) return key + "";
+        throw new Error("Invalid property name type " + typeof key);
+      }
+      let readFixedString2 = readStringJS2;
+      let isNativeAccelerationEnabled2 = false;
+      function readStringJS2(length) {
+        let result;
+        if (length < 16) {
+          if (result = shortStringInJS2(length))
+            return result;
+        }
+        if (length > 64 && decoder2)
+          return decoder2.decode(src2.subarray(position$1, position$1 += length));
+        const end = position$1 + length;
+        const units = [];
+        result = "";
+        while (position$1 < end) {
+          const byte1 = src2[position$1++];
+          if ((byte1 & 128) === 0) {
+            units.push(byte1);
+          } else if ((byte1 & 224) === 192) {
+            const byte2 = src2[position$1++] & 63;
+            units.push((byte1 & 31) << 6 | byte2);
+          } else if ((byte1 & 240) === 224) {
+            const byte2 = src2[position$1++] & 63;
+            const byte3 = src2[position$1++] & 63;
+            units.push((byte1 & 31) << 12 | byte2 << 6 | byte3);
+          } else if ((byte1 & 248) === 240) {
+            const byte2 = src2[position$1++] & 63;
+            const byte3 = src2[position$1++] & 63;
+            const byte4 = src2[position$1++] & 63;
+            let unit = (byte1 & 7) << 18 | byte2 << 12 | byte3 << 6 | byte4;
+            if (unit > 65535) {
+              unit -= 65536;
+              units.push(unit >>> 10 & 1023 | 55296);
+              unit = 56320 | unit & 1023;
+            }
+            units.push(unit);
+          } else {
+            units.push(byte1);
+          }
+          if (units.length >= 4096) {
+            result += fromCharCode2.apply(String, units);
+            units.length = 0;
+          }
+        }
+        if (units.length > 0) {
+          result += fromCharCode2.apply(String, units);
+        }
+        return result;
+      }
+      let fromCharCode2 = String.fromCharCode;
+      function longStringInJS2(length) {
+        let start = position$1;
+        let bytes = new Array(length);
+        for (let i = 0; i < length; i++) {
+          const byte = src2[position$1++];
+          if ((byte & 128) > 0) {
+            position$1 = start;
+            return;
+          }
+          bytes[i] = byte;
+        }
+        return fromCharCode2.apply(String, bytes);
+      }
+      function shortStringInJS2(length) {
+        if (length < 4) {
+          if (length < 2) {
+            if (length === 0)
+              return "";
+            else {
+              let a = src2[position$1++];
+              if ((a & 128) > 1) {
+                position$1 -= 1;
+                return;
+              }
+              return fromCharCode2(a);
+            }
+          } else {
+            let a = src2[position$1++];
+            let b = src2[position$1++];
+            if ((a & 128) > 0 || (b & 128) > 0) {
+              position$1 -= 2;
+              return;
+            }
+            if (length < 3)
+              return fromCharCode2(a, b);
+            let c = src2[position$1++];
+            if ((c & 128) > 0) {
+              position$1 -= 3;
+              return;
+            }
+            return fromCharCode2(a, b, c);
+          }
+        } else {
+          let a = src2[position$1++];
+          let b = src2[position$1++];
+          let c = src2[position$1++];
+          let d = src2[position$1++];
+          if ((a & 128) > 0 || (b & 128) > 0 || (c & 128) > 0 || (d & 128) > 0) {
+            position$1 -= 4;
+            return;
+          }
+          if (length < 6) {
+            if (length === 4)
+              return fromCharCode2(a, b, c, d);
+            else {
+              let e = src2[position$1++];
+              if ((e & 128) > 0) {
+                position$1 -= 5;
+                return;
+              }
+              return fromCharCode2(a, b, c, d, e);
+            }
+          } else if (length < 8) {
+            let e = src2[position$1++];
+            let f = src2[position$1++];
+            if ((e & 128) > 0 || (f & 128) > 0) {
+              position$1 -= 6;
+              return;
+            }
+            if (length < 7)
+              return fromCharCode2(a, b, c, d, e, f);
+            let g = src2[position$1++];
+            if ((g & 128) > 0) {
+              position$1 -= 7;
+              return;
+            }
+            return fromCharCode2(a, b, c, d, e, f, g);
+          } else {
+            let e = src2[position$1++];
+            let f = src2[position$1++];
+            let g = src2[position$1++];
+            let h = src2[position$1++];
+            if ((e & 128) > 0 || (f & 128) > 0 || (g & 128) > 0 || (h & 128) > 0) {
+              position$1 -= 8;
+              return;
+            }
+            if (length < 10) {
+              if (length === 8)
+                return fromCharCode2(a, b, c, d, e, f, g, h);
+              else {
+                let i = src2[position$1++];
+                if ((i & 128) > 0) {
+                  position$1 -= 9;
+                  return;
+                }
+                return fromCharCode2(a, b, c, d, e, f, g, h, i);
+              }
+            } else if (length < 12) {
+              let i = src2[position$1++];
+              let j = src2[position$1++];
+              if ((i & 128) > 0 || (j & 128) > 0) {
+                position$1 -= 10;
+                return;
+              }
+              if (length < 11)
+                return fromCharCode2(a, b, c, d, e, f, g, h, i, j);
+              let k = src2[position$1++];
+              if ((k & 128) > 0) {
+                position$1 -= 11;
+                return;
+              }
+              return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k);
+            } else {
+              let i = src2[position$1++];
+              let j = src2[position$1++];
+              let k = src2[position$1++];
+              let l = src2[position$1++];
+              if ((i & 128) > 0 || (j & 128) > 0 || (k & 128) > 0 || (l & 128) > 0) {
+                position$1 -= 12;
+                return;
+              }
+              if (length < 14) {
+                if (length === 12)
+                  return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l);
+                else {
+                  let m = src2[position$1++];
+                  if ((m & 128) > 0) {
+                    position$1 -= 13;
+                    return;
+                  }
+                  return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l, m);
+                }
+              } else {
+                let m = src2[position$1++];
+                let n = src2[position$1++];
+                if ((m & 128) > 0 || (n & 128) > 0) {
+                  position$1 -= 14;
+                  return;
+                }
+                if (length < 15)
+                  return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
+                let o = src2[position$1++];
+                if ((o & 128) > 0) {
+                  position$1 -= 15;
+                  return;
+                }
+                return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+              }
+            }
+          }
+        }
+      }
+      function readBin2(length) {
+        return currentDecoder2.copyBuffers ? (
+          // specifically use the copying slice (not the node one)
+          Uint8Array.prototype.slice.call(src2, position$1, position$1 += length)
+        ) : src2.subarray(position$1, position$1 += length);
+      }
+      let f32Array2 = new Float32Array(1);
+      let u8Array2 = new Uint8Array(f32Array2.buffer, 0, 4);
+      function getFloat162() {
+        let byte0 = src2[position$1++];
+        let byte1 = src2[position$1++];
+        let exponent = (byte0 & 127) >> 2;
+        if (exponent === 31) {
+          if (byte1 || byte0 & 3)
+            return NaN;
+          return byte0 & 128 ? -Infinity : Infinity;
+        }
+        if (exponent === 0) {
+          let abs = ((byte0 & 3) << 8 | byte1) / (1 << 24);
+          return byte0 & 128 ? -abs : abs;
+        }
+        u8Array2[3] = byte0 & 128 | // sign bit
+        (exponent >> 1) + 56;
+        u8Array2[2] = (byte0 & 7) << 5 | // last exponent bit and first two mantissa bits
+        byte1 >> 3;
+        u8Array2[1] = byte1 << 5;
+        u8Array2[0] = 0;
+        return f32Array2[0];
+      }
+      new Array(4096);
+      class Tag2 {
+        constructor(value, tag) {
+          this.value = value;
+          this.tag = tag;
+        }
+      }
+      currentExtensions2[0] = (dateString) => {
+        return new Date(dateString);
+      };
+      currentExtensions2[1] = (epochSec) => {
+        return new Date(Math.round(epochSec * 1e3));
+      };
+      currentExtensions2[2] = (buffer) => {
+        let value = BigInt(0);
+        for (let i = 0, l = buffer.byteLength; i < l; i++) {
+          value = BigInt(buffer[i]) + (value << BigInt(8));
+        }
+        return value;
+      };
+      currentExtensions2[3] = (buffer) => {
+        return BigInt(-1) - currentExtensions2[2](buffer);
+      };
+      currentExtensions2[4] = (fraction) => {
+        return +(fraction[1] + "e" + fraction[0]);
+      };
+      currentExtensions2[5] = (fraction) => {
+        return fraction[1] * Math.exp(fraction[0] * Math.log(2));
+      };
+      const recordDefinition2 = (id, structure) => {
+        id = id - 57344;
+        let existingStructure = currentStructures2[id];
+        if (existingStructure && existingStructure.isShared) {
+          (currentStructures2.restoreStructures || (currentStructures2.restoreStructures = []))[id] = existingStructure;
+        }
+        currentStructures2[id] = structure;
+        structure.read = createStructureReader2(structure);
+      };
+      currentExtensions2[LEGACY_RECORD_INLINE_ID2] = (data) => {
+        let length = data.length;
+        let structure = data[1];
+        recordDefinition2(data[0], structure);
+        let object = {};
+        for (let i = 2; i < length; i++) {
+          let key = structure[i - 2];
+          object[safeKey2(key)] = data[i];
+        }
+        return object;
+      };
+      currentExtensions2[14] = (value) => {
+        if (bundledStrings$1)
+          return bundledStrings$1[0].slice(bundledStrings$1.position0, bundledStrings$1.position0 += value);
+        return new Tag2(value, 14);
+      };
+      currentExtensions2[15] = (value) => {
+        if (bundledStrings$1)
+          return bundledStrings$1[1].slice(bundledStrings$1.position1, bundledStrings$1.position1 += value);
+        return new Tag2(value, 15);
+      };
+      let glbl2 = { Error, RegExp };
+      currentExtensions2[27] = (data) => {
+        return (glbl2[data[0]] || Error)(data[1], data[2]);
+      };
+      const packedTable2 = (read3) => {
+        if (src2[position$1++] != 132) {
+          let error = new Error("Packed values structure must be followed by a 4 element array");
+          if (src2.length < position$1)
+            error.incomplete = true;
+          throw error;
+        }
+        let newPackedValues = read3();
+        if (!newPackedValues || !newPackedValues.length) {
+          let error = new Error("Packed values structure must be followed by a 4 element array");
+          error.incomplete = true;
+          throw error;
+        }
+        packedValues2 = packedValues2 ? newPackedValues.concat(packedValues2.slice(newPackedValues.length)) : newPackedValues;
+        packedValues2.prefixes = read3();
+        packedValues2.suffixes = read3();
+        return read3();
+      };
+      packedTable2.handlesRead = true;
+      currentExtensions2[51] = packedTable2;
+      currentExtensions2[PACKED_REFERENCE_TAG_ID2] = (data) => {
+        if (!packedValues2) {
+          if (currentDecoder2.getShared)
+            loadShared2();
+          else
+            return new Tag2(data, PACKED_REFERENCE_TAG_ID2);
+        }
+        if (typeof data == "number")
+          return packedValues2[16 + (data >= 0 ? 2 * data : -2 * data - 1)];
+        let error = new Error("No support for non-integer packed references yet");
+        if (data === void 0)
+          error.incomplete = true;
+        throw error;
+      };
+      currentExtensions2[28] = (read3) => {
+        if (!referenceMap2) {
+          referenceMap2 = /* @__PURE__ */ new Map();
+          referenceMap2.id = 0;
+        }
+        let id = referenceMap2.id++;
+        let startingPosition = position$1;
+        let token = src2[position$1];
+        let target3;
+        if (token >> 5 == 4)
+          target3 = [];
+        else
+          target3 = {};
+        let refEntry = { target: target3 };
+        referenceMap2.set(id, refEntry);
+        let targetProperties = read3();
+        if (refEntry.used) {
+          if (Object.getPrototypeOf(target3) !== Object.getPrototypeOf(targetProperties)) {
+            position$1 = startingPosition;
+            target3 = targetProperties;
+            referenceMap2.set(id, { target: target3 });
+            targetProperties = read3();
+          }
+          return Object.assign(target3, targetProperties);
+        }
+        refEntry.target = targetProperties;
+        return targetProperties;
+      };
+      currentExtensions2[28].handlesRead = true;
+      currentExtensions2[29] = (id) => {
+        let refEntry = referenceMap2.get(id);
+        refEntry.used = true;
+        return refEntry.target;
+      };
+      currentExtensions2[258] = (array) => new Set(array);
+      (currentExtensions2[259] = (read3) => {
+        if (currentDecoder2.mapsAsObjects) {
+          currentDecoder2.mapsAsObjects = false;
+          restoreMapsAsObject2 = true;
+        }
+        return read3();
+      }).handlesRead = true;
+      function combine2(a, b) {
+        if (typeof a === "string")
+          return a + b;
+        if (a instanceof Array)
+          return a.concat(b);
+        return Object.assign({}, a, b);
+      }
+      function getPackedValues2() {
+        if (!packedValues2) {
+          if (currentDecoder2.getShared)
+            loadShared2();
+          else
+            throw new Error("No packed values available");
+        }
+        return packedValues2;
+      }
+      const SHARED_DATA_TAG_ID2 = 1399353956;
+      currentExtensionRanges2.push((tag, input) => {
+        if (tag >= 225 && tag <= 255)
+          return combine2(getPackedValues2().prefixes[tag - 224], input);
+        if (tag >= 28704 && tag <= 32767)
+          return combine2(getPackedValues2().prefixes[tag - 28672], input);
+        if (tag >= 1879052288 && tag <= 2147483647)
+          return combine2(getPackedValues2().prefixes[tag - 1879048192], input);
+        if (tag >= 216 && tag <= 223)
+          return combine2(input, getPackedValues2().suffixes[tag - 216]);
+        if (tag >= 27647 && tag <= 28671)
+          return combine2(input, getPackedValues2().suffixes[tag - 27639]);
+        if (tag >= 1811940352 && tag <= 1879048191)
+          return combine2(input, getPackedValues2().suffixes[tag - 1811939328]);
+        if (tag == SHARED_DATA_TAG_ID2) {
+          return {
+            packedValues: packedValues2,
+            structures: currentStructures2.slice(0),
+            version: input
+          };
+        }
+        if (tag == 55799)
+          return input;
+      });
+      const isLittleEndianMachine$1 = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
+      const typedArrays2 = [
+        Uint8Array,
+        Uint8ClampedArray,
+        Uint16Array,
+        Uint32Array,
+        typeof BigUint64Array == "undefined" ? { name: "BigUint64Array" } : BigUint64Array,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        typeof BigInt64Array == "undefined" ? { name: "BigInt64Array" } : BigInt64Array,
+        Float32Array,
+        Float64Array
+      ];
+      const typedArrayTags2 = [64, 68, 69, 70, 71, 72, 77, 78, 79, 85, 86];
+      for (let i = 0; i < typedArrays2.length; i++) {
+        registerTypedArray2(typedArrays2[i], typedArrayTags2[i]);
+      }
+      function registerTypedArray2(TypedArray, tag) {
+        let dvMethod = "get" + TypedArray.name.slice(0, -5);
+        let bytesPerElement;
+        if (typeof TypedArray === "function")
+          bytesPerElement = TypedArray.BYTES_PER_ELEMENT;
+        else
+          TypedArray = null;
+        for (let littleEndian = 0; littleEndian < 2; littleEndian++) {
+          if (!littleEndian && bytesPerElement == 1)
+            continue;
+          let sizeShift = bytesPerElement == 2 ? 1 : bytesPerElement == 4 ? 2 : bytesPerElement == 8 ? 3 : 0;
+          currentExtensions2[littleEndian ? tag : tag - 4] = bytesPerElement == 1 || littleEndian == isLittleEndianMachine$1 ? (buffer) => {
+            if (!TypedArray)
+              throw new Error("Could not find typed array for code " + tag);
+            if (!currentDecoder2.copyBuffers) {
+              if (bytesPerElement === 1 || bytesPerElement === 2 && !(buffer.byteOffset & 1) || bytesPerElement === 4 && !(buffer.byteOffset & 3) || bytesPerElement === 8 && !(buffer.byteOffset & 7))
+                return new TypedArray(buffer.buffer, buffer.byteOffset, buffer.byteLength >> sizeShift);
+            }
+            return new TypedArray(Uint8Array.prototype.slice.call(buffer, 0).buffer);
+          } : (buffer) => {
+            if (!TypedArray)
+              throw new Error("Could not find typed array for code " + tag);
+            let dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+            let elements = buffer.length >> sizeShift;
+            let ta = new TypedArray(elements);
+            let method = dv[dvMethod];
+            for (let i = 0; i < elements; i++) {
+              ta[i] = method.call(dv, i << sizeShift, littleEndian);
+            }
+            return ta;
+          };
+        }
+      }
+      function readBundleExt2() {
+        let length = readJustLength2();
+        let bundlePosition = position$1 + read2();
+        for (let i = 2; i < length; i++) {
+          let bundleLength = readJustLength2();
+          position$1 += bundleLength;
+        }
+        let dataPosition = position$1;
+        position$1 = bundlePosition;
+        bundledStrings$1 = [readStringJS2(readJustLength2()), readStringJS2(readJustLength2())];
+        bundledStrings$1.position0 = 0;
+        bundledStrings$1.position1 = 0;
+        bundledStrings$1.postBundlePosition = position$1;
+        position$1 = dataPosition;
+        return read2();
+      }
+      function readJustLength2() {
+        let token = src2[position$1++] & 31;
+        if (token > 23) {
+          switch (token) {
+            case 24:
+              token = src2[position$1++];
+              break;
+            case 25:
+              token = dataView2.getUint16(position$1);
+              position$1 += 2;
+              break;
+            case 26:
+              token = dataView2.getUint32(position$1);
+              position$1 += 4;
+              break;
+          }
+        }
+        return token;
+      }
+      function loadShared2() {
+        if (currentDecoder2.getShared) {
+          let sharedData = saveState2(() => {
+            src2 = null;
+            return currentDecoder2.getShared();
+          }) || {};
+          let updatedStructures = sharedData.structures || [];
+          currentDecoder2.sharedVersion = sharedData.version;
+          packedValues2 = currentDecoder2.sharedValues = sharedData.packedValues;
+          if (currentStructures2 === true)
+            currentDecoder2.structures = currentStructures2 = updatedStructures;
+          else
+            currentStructures2.splice.apply(currentStructures2, [0, updatedStructures.length].concat(updatedStructures));
+        }
+      }
+      function saveState2(callback) {
+        let savedSrcEnd = srcEnd2;
+        let savedPosition = position$1;
+        let savedSrcStringStart = srcStringStart2;
+        let savedSrcStringEnd = srcStringEnd2;
+        let savedSrcString = srcString2;
+        let savedReferenceMap = referenceMap2;
+        let savedBundledStrings = bundledStrings$1;
+        let savedSrc = new Uint8Array(src2.slice(0, srcEnd2));
+        let savedStructures = currentStructures2;
+        let savedDecoder = currentDecoder2;
+        let savedSequentialMode = sequentialMode2;
+        let value = callback();
+        srcEnd2 = savedSrcEnd;
+        position$1 = savedPosition;
+        srcStringStart2 = savedSrcStringStart;
+        srcStringEnd2 = savedSrcStringEnd;
+        srcString2 = savedSrcString;
+        referenceMap2 = savedReferenceMap;
+        bundledStrings$1 = savedBundledStrings;
+        src2 = savedSrc;
+        sequentialMode2 = savedSequentialMode;
+        currentStructures2 = savedStructures;
+        currentDecoder2 = savedDecoder;
+        dataView2 = new DataView(src2.buffer, src2.byteOffset, src2.byteLength);
+        return value;
+      }
+      function clearSource2() {
+        src2 = null;
+        referenceMap2 = null;
+        currentStructures2 = null;
+      }
+      function addExtension$1(extension) {
+        currentExtensions2[extension.tag] = extension.decode;
+      }
+      function setSizeLimits(limits) {
+        if (limits.maxMapSize) maxMapSize = limits.maxMapSize;
+        if (limits.maxArraySize) maxArraySize = limits.maxArraySize;
+        if (limits.maxObjectSize) limits.maxObjectSize;
+      }
+      const mult102 = new Array(147);
+      for (let i = 0; i < 256; i++) {
+        mult102[i] = +("1e" + Math.floor(45.15 - i * 0.30103));
+      }
+      let defaultDecoder2 = new Decoder3({ useRecords: false });
+      const decode3 = defaultDecoder2.decode;
+      const decodeMultiple2 = defaultDecoder2.decodeMultiple;
+      const FLOAT32_OPTIONS2 = {
+        NEVER: 0,
+        ALWAYS: 1,
+        DECIMAL_ROUND: 3,
+        DECIMAL_FIT: 4
+      };
+      function roundFloat322(float32Number) {
+        f32Array2[0] = float32Number;
+        let multiplier = mult102[(u8Array2[3] & 127) << 1 | u8Array2[2] >> 7];
+        return (multiplier * float32Number + (float32Number > 0 ? 0.5 : -0.5) >> 0) / multiplier;
+      }
+      let textEncoder2;
+      try {
+        textEncoder2 = new TextEncoder();
+      } catch (error) {
+      }
+      let extensions2, extensionClasses2;
+      const Buffer$1 = typeof globalThis === "object" && globalThis.Buffer;
+      const hasNodeBuffer2 = typeof Buffer$1 !== "undefined";
+      const ByteArrayAllocate2 = hasNodeBuffer2 ? Buffer$1.allocUnsafeSlow : Uint8Array;
+      const ByteArray2 = hasNodeBuffer2 ? Buffer$1 : Uint8Array;
+      const MAX_STRUCTURES2 = 256;
+      const MAX_BUFFER_SIZE2 = hasNodeBuffer2 ? 4294967296 : 2144337920;
+      let throwOnIterable2;
+      let target2;
+      let targetView2;
+      let position3 = 0;
+      let safeEnd2;
+      let bundledStrings3 = null;
+      const MAX_BUNDLE_SIZE2 = 61440;
+      const hasNonLatin2 = /[\u0080-\uFFFF]/;
+      const RECORD_SYMBOL2 = /* @__PURE__ */ Symbol("record-id");
+      class Encoder3 extends Decoder3 {
+        constructor(options) {
+          super(options);
+          this.offset = 0;
+          let start;
+          let sharedStructures;
+          let hasSharedUpdate;
+          let structures;
+          let referenceMap3;
+          options = options || {};
+          let encodeUtf8 = ByteArray2.prototype.utf8Write ? function(string, position4, maxBytes) {
+            return target2.utf8Write(string, position4, maxBytes);
+          } : textEncoder2 && textEncoder2.encodeInto ? function(string, position4) {
+            return textEncoder2.encodeInto(string, target2.subarray(position4)).written;
+          } : false;
+          let encoder = this;
+          let hasSharedStructures = options.structures || options.saveStructures;
+          let maxSharedStructures = options.maxSharedStructures;
+          if (maxSharedStructures == null)
+            maxSharedStructures = hasSharedStructures ? 128 : 0;
+          if (maxSharedStructures > 8190)
+            throw new Error("Maximum maxSharedStructure is 8190");
+          let isSequential = options.sequential;
+          if (isSequential) {
+            maxSharedStructures = 0;
+          }
+          if (!this.structures)
+            this.structures = [];
+          if (this.saveStructures)
+            this.saveShared = this.saveStructures;
+          let samplingPackedValues, packedObjectMap2, sharedValues = options.sharedValues;
+          let sharedPackedObjectMap2;
+          if (sharedValues) {
+            sharedPackedObjectMap2 = /* @__PURE__ */ Object.create(null);
+            for (let i = 0, l = sharedValues.length; i < l; i++) {
+              sharedPackedObjectMap2[sharedValues[i]] = i;
+            }
+          }
+          let recordIdsToRemove = [];
+          let transitionsCount = 0;
+          let serializationsSinceTransitionRebuild = 0;
+          this.mapEncode = function(value, encodeOptions) {
+            if (this._keyMap && !this._mapped) {
+              switch (value.constructor.name) {
+                case "Array":
+                  value = value.map((r) => this.encodeKeys(r));
+                  break;
+              }
+            }
+            return this.encode(value, encodeOptions);
+          };
+          this.encode = function(value, encodeOptions) {
+            if (!target2) {
+              target2 = new ByteArrayAllocate2(8192);
+              targetView2 = new DataView(target2.buffer, 0, 8192);
+              position3 = 0;
+            }
+            safeEnd2 = target2.length - 10;
+            if (safeEnd2 - position3 < 2048) {
+              target2 = new ByteArrayAllocate2(target2.length);
+              targetView2 = new DataView(target2.buffer, 0, target2.length);
+              safeEnd2 = target2.length - 10;
+              position3 = 0;
+            } else if (encodeOptions === REUSE_BUFFER_MODE2)
+              position3 = position3 + 7 & 2147483640;
+            start = position3;
+            if (encoder.useSelfDescribedHeader) {
+              targetView2.setUint32(position3, 3654940416);
+              position3 += 3;
+            }
+            referenceMap3 = encoder.structuredClone ? /* @__PURE__ */ new Map() : null;
+            if (encoder.bundleStrings && typeof value !== "string") {
+              bundledStrings3 = [];
+              bundledStrings3.size = Infinity;
+            } else
+              bundledStrings3 = null;
+            sharedStructures = encoder.structures;
+            if (sharedStructures) {
+              if (sharedStructures.uninitialized) {
+                let sharedData = encoder.getShared() || {};
+                encoder.structures = sharedStructures = sharedData.structures || [];
+                encoder.sharedVersion = sharedData.version;
+                let sharedValues2 = encoder.sharedValues = sharedData.packedValues;
+                if (sharedValues2) {
+                  sharedPackedObjectMap2 = {};
+                  for (let i = 0, l = sharedValues2.length; i < l; i++)
+                    sharedPackedObjectMap2[sharedValues2[i]] = i;
+                }
+              }
+              let sharedStructuresLength = sharedStructures.length;
+              if (sharedStructuresLength > maxSharedStructures && !isSequential)
+                sharedStructuresLength = maxSharedStructures;
+              if (!sharedStructures.transitions) {
+                sharedStructures.transitions = /* @__PURE__ */ Object.create(null);
+                for (let i = 0; i < sharedStructuresLength; i++) {
+                  let keys = sharedStructures[i];
+                  if (!keys)
+                    continue;
+                  let nextTransition, transition = sharedStructures.transitions;
+                  for (let j = 0, l = keys.length; j < l; j++) {
+                    if (transition[RECORD_SYMBOL2] === void 0)
+                      transition[RECORD_SYMBOL2] = i;
+                    let key = keys[j];
+                    nextTransition = transition[key];
+                    if (!nextTransition) {
+                      nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
+                    }
+                    transition = nextTransition;
+                  }
+                  transition[RECORD_SYMBOL2] = i | 1048576;
+                }
+              }
+              if (!isSequential)
+                sharedStructures.nextId = sharedStructuresLength;
+            }
+            if (hasSharedUpdate)
+              hasSharedUpdate = false;
+            structures = sharedStructures || [];
+            packedObjectMap2 = sharedPackedObjectMap2;
+            if (options.pack) {
+              let packedValues3 = /* @__PURE__ */ new Map();
+              packedValues3.values = [];
+              packedValues3.encoder = encoder;
+              packedValues3.maxValues = options.maxPrivatePackedValues || (sharedPackedObjectMap2 ? 16 : Infinity);
+              packedValues3.objectMap = sharedPackedObjectMap2 || false;
+              packedValues3.samplingPackedValues = samplingPackedValues;
+              findRepetitiveStrings2(value, packedValues3);
+              if (packedValues3.values.length > 0) {
+                target2[position3++] = 216;
+                target2[position3++] = 51;
+                writeArrayHeader2(4);
+                let valuesArray = packedValues3.values;
+                encode4(valuesArray);
+                writeArrayHeader2(0);
+                writeArrayHeader2(0);
+                packedObjectMap2 = Object.create(sharedPackedObjectMap2 || null);
+                for (let i = 0, l = valuesArray.length; i < l; i++) {
+                  packedObjectMap2[valuesArray[i]] = i;
+                }
+              }
+            }
+            throwOnIterable2 = encodeOptions & THROW_ON_ITERABLE2;
+            try {
+              if (throwOnIterable2)
+                return;
+              encode4(value);
+              if (bundledStrings3) {
+                writeBundles2(start, encode4);
+              }
+              encoder.offset = position3;
+              if (referenceMap3 && referenceMap3.idsToInsert) {
+                position3 += referenceMap3.idsToInsert.length * 2;
+                if (position3 > safeEnd2)
+                  makeRoom(position3);
+                encoder.offset = position3;
+                let serialized = insertIds2(target2.subarray(start, position3), referenceMap3.idsToInsert);
+                referenceMap3 = null;
+                return serialized;
+              }
+              if (encodeOptions & REUSE_BUFFER_MODE2) {
+                target2.start = start;
+                target2.end = position3;
+                return target2;
+              }
+              return target2.subarray(start, position3);
+            } finally {
+              if (sharedStructures) {
+                if (serializationsSinceTransitionRebuild < 10)
+                  serializationsSinceTransitionRebuild++;
+                if (sharedStructures.length > maxSharedStructures)
+                  sharedStructures.length = maxSharedStructures;
+                if (transitionsCount > 1e4) {
+                  sharedStructures.transitions = null;
+                  serializationsSinceTransitionRebuild = 0;
+                  transitionsCount = 0;
+                  if (recordIdsToRemove.length > 0)
+                    recordIdsToRemove = [];
+                } else if (recordIdsToRemove.length > 0 && !isSequential) {
+                  for (let i = 0, l = recordIdsToRemove.length; i < l; i++) {
+                    recordIdsToRemove[i][RECORD_SYMBOL2] = void 0;
+                  }
+                  recordIdsToRemove = [];
+                }
+              }
+              if (hasSharedUpdate && encoder.saveShared) {
+                if (encoder.structures.length > maxSharedStructures) {
+                  encoder.structures = encoder.structures.slice(0, maxSharedStructures);
+                }
+                let returnBuffer = target2.subarray(start, position3);
+                if (encoder.updateSharedData() === false)
+                  return encoder.encode(value);
+                return returnBuffer;
+              }
+              if (encodeOptions & RESET_BUFFER_MODE2)
+                position3 = start;
+            }
+          };
+          this.findCommonStringsToPack = () => {
+            samplingPackedValues = /* @__PURE__ */ new Map();
+            if (!sharedPackedObjectMap2)
+              sharedPackedObjectMap2 = /* @__PURE__ */ Object.create(null);
+            return (options2) => {
+              let threshold = options2 && options2.threshold || 4;
+              let position4 = this.pack ? options2.maxPrivatePackedValues || 16 : 0;
+              if (!sharedValues)
+                sharedValues = this.sharedValues = [];
+              for (let [key, status] of samplingPackedValues) {
+                if (status.count > threshold) {
+                  sharedPackedObjectMap2[key] = position4++;
+                  sharedValues.push(key);
+                  hasSharedUpdate = true;
+                }
+              }
+              while (this.saveShared && this.updateSharedData() === false) {
+              }
+              samplingPackedValues = null;
+            };
+          };
+          const encode4 = (value) => {
+            if (position3 > safeEnd2)
+              target2 = makeRoom(position3);
+            var type = typeof value;
+            var length;
+            if (type === "string") {
+              if (packedObjectMap2) {
+                let packedPosition = packedObjectMap2[value];
+                if (packedPosition >= 0) {
+                  if (packedPosition < 16)
+                    target2[position3++] = packedPosition + 224;
+                  else {
+                    target2[position3++] = 198;
+                    if (packedPosition & 1)
+                      encode4(15 - packedPosition >> 1);
+                    else
+                      encode4(packedPosition - 16 >> 1);
+                  }
+                  return;
+                } else if (samplingPackedValues && !options.pack) {
+                  let status = samplingPackedValues.get(value);
+                  if (status)
+                    status.count++;
+                  else
+                    samplingPackedValues.set(value, {
+                      count: 1
+                    });
+                }
+              }
+              let strLength = value.length;
+              if (bundledStrings3 && strLength >= 4 && strLength < 1024) {
+                if ((bundledStrings3.size += strLength) > MAX_BUNDLE_SIZE2) {
+                  let extStart;
+                  let maxBytes2 = (bundledStrings3[0] ? bundledStrings3[0].length * 3 + bundledStrings3[1].length : 0) + 10;
+                  if (position3 + maxBytes2 > safeEnd2)
+                    target2 = makeRoom(position3 + maxBytes2);
+                  target2[position3++] = 217;
+                  target2[position3++] = 223;
+                  target2[position3++] = 249;
+                  target2[position3++] = bundledStrings3.position ? 132 : 130;
+                  target2[position3++] = 26;
+                  extStart = position3 - start;
+                  position3 += 4;
+                  if (bundledStrings3.position) {
+                    writeBundles2(start, encode4);
+                  }
+                  bundledStrings3 = ["", ""];
+                  bundledStrings3.size = 0;
+                  bundledStrings3.position = extStart;
+                }
+                let twoByte = hasNonLatin2.test(value);
+                bundledStrings3[twoByte ? 0 : 1] += value;
+                target2[position3++] = twoByte ? 206 : 207;
+                encode4(strLength);
+                return;
+              }
+              let headerSize;
+              if (strLength < 32) {
+                headerSize = 1;
+              } else if (strLength < 256) {
+                headerSize = 2;
+              } else if (strLength < 65536) {
+                headerSize = 3;
+              } else {
+                headerSize = 5;
+              }
+              let maxBytes = strLength * 3;
+              if (position3 + maxBytes > safeEnd2)
+                target2 = makeRoom(position3 + maxBytes);
+              if (strLength < 64 || !encodeUtf8) {
+                let i, c1, c2, strPosition = position3 + headerSize;
+                for (i = 0; i < strLength; i++) {
+                  c1 = value.charCodeAt(i);
+                  if (c1 < 128) {
+                    target2[strPosition++] = c1;
+                  } else if (c1 < 2048) {
+                    target2[strPosition++] = c1 >> 6 | 192;
+                    target2[strPosition++] = c1 & 63 | 128;
+                  } else if ((c1 & 64512) === 55296 && ((c2 = value.charCodeAt(i + 1)) & 64512) === 56320) {
+                    c1 = 65536 + ((c1 & 1023) << 10) + (c2 & 1023);
+                    i++;
+                    target2[strPosition++] = c1 >> 18 | 240;
+                    target2[strPosition++] = c1 >> 12 & 63 | 128;
+                    target2[strPosition++] = c1 >> 6 & 63 | 128;
+                    target2[strPosition++] = c1 & 63 | 128;
+                  } else {
+                    target2[strPosition++] = c1 >> 12 | 224;
+                    target2[strPosition++] = c1 >> 6 & 63 | 128;
+                    target2[strPosition++] = c1 & 63 | 128;
+                  }
+                }
+                length = strPosition - position3 - headerSize;
+              } else {
+                length = encodeUtf8(value, position3 + headerSize, maxBytes);
+              }
+              if (length < 24) {
+                target2[position3++] = 96 | length;
+              } else if (length < 256) {
+                if (headerSize < 2) {
+                  target2.copyWithin(position3 + 2, position3 + 1, position3 + 1 + length);
+                }
+                target2[position3++] = 120;
+                target2[position3++] = length;
+              } else if (length < 65536) {
+                if (headerSize < 3) {
+                  target2.copyWithin(position3 + 3, position3 + 2, position3 + 2 + length);
+                }
+                target2[position3++] = 121;
+                target2[position3++] = length >> 8;
+                target2[position3++] = length & 255;
+              } else {
+                if (headerSize < 5) {
+                  target2.copyWithin(position3 + 5, position3 + 3, position3 + 3 + length);
+                }
+                target2[position3++] = 122;
+                targetView2.setUint32(position3, length);
+                position3 += 4;
+              }
+              position3 += length;
+            } else if (type === "number") {
+              if (!this.alwaysUseFloat && value >>> 0 === value) {
+                if (value < 24) {
+                  target2[position3++] = value;
+                } else if (value < 256) {
+                  target2[position3++] = 24;
+                  target2[position3++] = value;
+                } else if (value < 65536) {
+                  target2[position3++] = 25;
+                  target2[position3++] = value >> 8;
+                  target2[position3++] = value & 255;
+                } else {
+                  target2[position3++] = 26;
+                  targetView2.setUint32(position3, value);
+                  position3 += 4;
+                }
+              } else if (!this.alwaysUseFloat && value >> 0 === value) {
+                if (value >= -24) {
+                  target2[position3++] = 31 - value;
+                } else if (value >= -256) {
+                  target2[position3++] = 56;
+                  target2[position3++] = ~value;
+                } else if (value >= -65536) {
+                  target2[position3++] = 57;
+                  targetView2.setUint16(position3, ~value);
+                  position3 += 2;
+                } else {
+                  target2[position3++] = 58;
+                  targetView2.setUint32(position3, ~value);
+                  position3 += 4;
+                }
+              } else {
+                let useFloat32;
+                if ((useFloat32 = this.useFloat32) > 0 && value < 4294967296 && value >= -2147483648) {
+                  target2[position3++] = 250;
+                  targetView2.setFloat32(position3, value);
+                  let xShifted;
+                  if (useFloat32 < 4 || // this checks for rounding of numbers that were encoded in 32-bit float to nearest significant decimal digit that could be preserved
+                  (xShifted = value * mult102[(target2[position3] & 127) << 1 | target2[position3 + 1] >> 7]) >> 0 === xShifted) {
+                    position3 += 4;
+                    return;
+                  } else
+                    position3--;
+                }
+                target2[position3++] = 251;
+                targetView2.setFloat64(position3, value);
+                position3 += 8;
+              }
+            } else if (type === "object") {
+              if (!value)
+                target2[position3++] = 246;
+              else {
+                if (referenceMap3) {
+                  let referee = referenceMap3.get(value);
+                  if (referee) {
+                    target2[position3++] = 216;
+                    target2[position3++] = 29;
+                    target2[position3++] = 25;
+                    if (!referee.references) {
+                      let idsToInsert = referenceMap3.idsToInsert || (referenceMap3.idsToInsert = []);
+                      referee.references = [];
+                      idsToInsert.push(referee);
+                    }
+                    referee.references.push(position3 - start);
+                    position3 += 2;
+                    return;
+                  } else
+                    referenceMap3.set(value, { offset: position3 - start });
+                }
+                let constructor = value.constructor;
+                if (constructor === Object) {
+                  writeObject(value);
+                } else if (constructor === Array) {
+                  length = value.length;
+                  if (length < 24) {
+                    target2[position3++] = 128 | length;
+                  } else {
+                    writeArrayHeader2(length);
+                  }
+                  for (let i = 0; i < length; i++) {
+                    encode4(value[i]);
+                  }
+                } else if (constructor === Map) {
+                  if (this.mapsAsObjects ? this.useTag259ForMaps !== false : this.useTag259ForMaps) {
+                    target2[position3++] = 217;
+                    target2[position3++] = 1;
+                    target2[position3++] = 3;
+                  }
+                  length = value.size;
+                  if (length < 24) {
+                    target2[position3++] = 160 | length;
+                  } else if (length < 256) {
+                    target2[position3++] = 184;
+                    target2[position3++] = length;
+                  } else if (length < 65536) {
+                    target2[position3++] = 185;
+                    target2[position3++] = length >> 8;
+                    target2[position3++] = length & 255;
+                  } else {
+                    target2[position3++] = 186;
+                    targetView2.setUint32(position3, length);
+                    position3 += 4;
+                  }
+                  if (encoder.keyMap) {
+                    for (let [key, entryValue] of value) {
+                      encode4(encoder.encodeKey(key));
+                      encode4(entryValue);
+                    }
+                  } else {
+                    for (let [key, entryValue] of value) {
+                      encode4(key);
+                      encode4(entryValue);
+                    }
+                  }
+                } else {
+                  for (let i = 0, l = extensions2.length; i < l; i++) {
+                    let extensionClass = extensionClasses2[i];
+                    if (value instanceof extensionClass) {
+                      let extension = extensions2[i];
+                      let tag = extension.tag;
+                      if (tag == void 0)
+                        tag = extension.getTag && extension.getTag.call(this, value);
+                      if (tag < 24) {
+                        target2[position3++] = 192 | tag;
+                      } else if (tag < 256) {
+                        target2[position3++] = 216;
+                        target2[position3++] = tag;
+                      } else if (tag < 65536) {
+                        target2[position3++] = 217;
+                        target2[position3++] = tag >> 8;
+                        target2[position3++] = tag & 255;
+                      } else if (tag > -1) {
+                        target2[position3++] = 218;
+                        targetView2.setUint32(position3, tag);
+                        position3 += 4;
+                      }
+                      extension.encode.call(this, value, encode4, makeRoom);
+                      return;
+                    }
+                  }
+                  if (value[Symbol.iterator]) {
+                    if (throwOnIterable2) {
+                      let error = new Error("Iterable should be serialized as iterator");
+                      error.iteratorNotHandled = true;
+                      throw error;
+                    }
+                    target2[position3++] = 159;
+                    for (let entry of value) {
+                      encode4(entry);
+                    }
+                    target2[position3++] = 255;
+                    return;
+                  }
+                  if (value[Symbol.asyncIterator] || isBlob2(value)) {
+                    let error = new Error("Iterable/blob should be serialized as iterator");
+                    error.iteratorNotHandled = true;
+                    throw error;
+                  }
+                  if (this.useToJSON && value.toJSON) {
+                    const json = value.toJSON();
+                    if (json !== value)
+                      return encode4(json);
+                  }
+                  writeObject(value);
+                }
+              }
+            } else if (type === "boolean") {
+              target2[position3++] = value ? 245 : 244;
+            } else if (type === "bigint") {
+              if (value < BigInt(1) << BigInt(64) && value >= 0) {
+                target2[position3++] = 27;
+                targetView2.setBigUint64(position3, value);
+              } else if (value > -(BigInt(1) << BigInt(64)) && value < 0) {
+                target2[position3++] = 59;
+                targetView2.setBigUint64(position3, -value - BigInt(1));
+              } else {
+                if (this.largeBigIntToFloat) {
+                  target2[position3++] = 251;
+                  targetView2.setFloat64(position3, Number(value));
+                } else {
+                  if (value >= BigInt(0))
+                    target2[position3++] = 194;
+                  else {
+                    target2[position3++] = 195;
+                    value = BigInt(-1) - value;
+                  }
+                  let bytes = [];
+                  while (value) {
+                    bytes.push(Number(value & BigInt(255)));
+                    value >>= BigInt(8);
+                  }
+                  writeBuffer2(new Uint8Array(bytes.reverse()), makeRoom);
+                  return;
+                }
+              }
+              position3 += 8;
+            } else if (type === "undefined") {
+              target2[position3++] = 247;
+            } else {
+              throw new Error("Unknown type: " + type);
+            }
+          };
+          const writeObject = this.useRecords === false ? this.variableMapSize ? (object) => {
+            let keys = Object.keys(object);
+            let vals = Object.values(object);
+            let length = keys.length;
+            if (length < 24) {
+              target2[position3++] = 160 | length;
+            } else if (length < 256) {
+              target2[position3++] = 184;
+              target2[position3++] = length;
+            } else if (length < 65536) {
+              target2[position3++] = 185;
+              target2[position3++] = length >> 8;
+              target2[position3++] = length & 255;
+            } else {
+              target2[position3++] = 186;
+              targetView2.setUint32(position3, length);
+              position3 += 4;
+            }
+            if (encoder.keyMap) {
+              for (let i = 0; i < length; i++) {
+                encode4(encoder.encodeKey(keys[i]));
+                encode4(vals[i]);
+              }
+            } else {
+              for (let i = 0; i < length; i++) {
+                encode4(keys[i]);
+                encode4(vals[i]);
+              }
+            }
+          } : (object) => {
+            target2[position3++] = 185;
+            let objectOffset = position3 - start;
+            position3 += 2;
+            let size = 0;
+            if (encoder.keyMap) {
+              for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
+                encode4(encoder.encodeKey(key));
+                encode4(object[key]);
+                size++;
+              }
+            } else {
+              for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
+                encode4(key);
+                encode4(object[key]);
+                size++;
+              }
+            }
+            target2[objectOffset++ + start] = size >> 8;
+            target2[objectOffset + start] = size & 255;
+          } : (object, skipValues) => {
+            let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
+            let newTransitions = 0;
+            let length = 0;
+            let parentRecordId;
+            let keys;
+            if (this.keyMap) {
+              keys = Object.keys(object).map((k) => this.encodeKey(k));
+              length = keys.length;
+              for (let i = 0; i < length; i++) {
+                let key = keys[i];
+                nextTransition = transition[key];
+                if (!nextTransition) {
+                  nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
+                  newTransitions++;
+                }
+                transition = nextTransition;
+              }
+            } else {
+              for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
+                nextTransition = transition[key];
+                if (!nextTransition) {
+                  if (transition[RECORD_SYMBOL2] & 1048576) {
+                    parentRecordId = transition[RECORD_SYMBOL2] & 65535;
+                  }
+                  nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
+                  newTransitions++;
+                }
+                transition = nextTransition;
+                length++;
+              }
+            }
+            let recordId = transition[RECORD_SYMBOL2];
+            if (recordId !== void 0) {
+              recordId &= 65535;
+              target2[position3++] = 217;
+              target2[position3++] = recordId >> 8 | 224;
+              target2[position3++] = recordId & 255;
+            } else {
+              if (!keys)
+                keys = transition.__keys__ || (transition.__keys__ = Object.keys(object));
+              if (parentRecordId === void 0) {
+                recordId = structures.nextId++;
+                if (!recordId) {
+                  recordId = 0;
+                  structures.nextId = 1;
+                }
+                if (recordId >= MAX_STRUCTURES2) {
+                  structures.nextId = (recordId = maxSharedStructures) + 1;
+                }
+              } else {
+                recordId = parentRecordId;
+              }
+              structures[recordId] = keys;
+              if (recordId < maxSharedStructures) {
+                target2[position3++] = 217;
+                target2[position3++] = recordId >> 8 | 224;
+                target2[position3++] = recordId & 255;
+                transition = structures.transitions;
+                for (let i = 0; i < length; i++) {
+                  if (transition[RECORD_SYMBOL2] === void 0 || transition[RECORD_SYMBOL2] & 1048576)
+                    transition[RECORD_SYMBOL2] = recordId;
+                  transition = transition[keys[i]];
+                }
+                transition[RECORD_SYMBOL2] = recordId | 1048576;
+                hasSharedUpdate = true;
+              } else {
+                transition[RECORD_SYMBOL2] = recordId;
+                targetView2.setUint32(position3, 3655335680);
+                position3 += 3;
+                if (newTransitions)
+                  transitionsCount += serializationsSinceTransitionRebuild * newTransitions;
+                if (recordIdsToRemove.length >= MAX_STRUCTURES2 - maxSharedStructures)
+                  recordIdsToRemove.shift()[RECORD_SYMBOL2] = void 0;
+                recordIdsToRemove.push(transition);
+                writeArrayHeader2(length + 2);
+                encode4(57344 + recordId);
+                encode4(keys);
+                if (skipValues) return;
+                for (let key in object)
+                  if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key))
+                    encode4(object[key]);
+                return;
+              }
+            }
+            if (length < 24) {
+              target2[position3++] = 128 | length;
+            } else {
+              writeArrayHeader2(length);
+            }
+            if (skipValues) return;
+            for (let key in object)
+              if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key))
+                encode4(object[key]);
+          };
+          const makeRoom = (end) => {
+            let newSize;
+            if (end > 16777216) {
+              if (end - start > MAX_BUFFER_SIZE2)
+                throw new Error("Encoded buffer would be larger than maximum buffer size");
+              newSize = Math.min(
+                MAX_BUFFER_SIZE2,
+                Math.round(Math.max((end - start) * (end > 67108864 ? 1.25 : 2), 4194304) / 4096) * 4096
+              );
+            } else
+              newSize = (Math.max(end - start << 2, target2.length - 1) >> 12) + 1 << 12;
+            let newBuffer = new ByteArrayAllocate2(newSize);
+            targetView2 = new DataView(newBuffer.buffer, 0, newSize);
+            if (target2.copy)
+              target2.copy(newBuffer, 0, start, end);
+            else
+              newBuffer.set(target2.slice(start, end));
+            position3 -= start;
+            start = 0;
+            safeEnd2 = newBuffer.length - 10;
+            return target2 = newBuffer;
+          };
+          let chunkThreshold = 100;
+          let continuedChunkThreshold = 1e3;
+          this.encodeAsIterable = function(value, options2) {
+            return startEncoding(value, options2, encodeObjectAsIterable);
+          };
+          this.encodeAsAsyncIterable = function(value, options2) {
+            return startEncoding(value, options2, encodeObjectAsAsyncIterable);
+          };
+          function* encodeObjectAsIterable(object, iterateProperties, finalIterable) {
+            let constructor = object.constructor;
+            if (constructor === Object) {
+              let useRecords = encoder.useRecords !== false;
+              if (useRecords)
+                writeObject(object, true);
+              else
+                writeEntityLength2(Object.keys(object).length, 160);
+              for (let key in object) {
+                let value = object[key];
+                if (!useRecords) encode4(key);
+                if (value && typeof value === "object") {
+                  if (iterateProperties[key])
+                    yield* encodeObjectAsIterable(value, iterateProperties[key]);
+                  else
+                    yield* tryEncode(value, iterateProperties, key);
+                } else encode4(value);
+              }
+            } else if (constructor === Array) {
+              let length = object.length;
+              writeArrayHeader2(length);
+              for (let i = 0; i < length; i++) {
+                let value = object[i];
+                if (value && (typeof value === "object" || position3 - start > chunkThreshold)) {
+                  if (iterateProperties.element)
+                    yield* encodeObjectAsIterable(value, iterateProperties.element);
+                  else
+                    yield* tryEncode(value, iterateProperties, "element");
+                } else encode4(value);
+              }
+            } else if (object[Symbol.iterator] && !object.buffer) {
+              target2[position3++] = 159;
+              for (let value of object) {
+                if (value && (typeof value === "object" || position3 - start > chunkThreshold)) {
+                  if (iterateProperties.element)
+                    yield* encodeObjectAsIterable(value, iterateProperties.element);
+                  else
+                    yield* tryEncode(value, iterateProperties, "element");
+                } else encode4(value);
+              }
+              target2[position3++] = 255;
+            } else if (isBlob2(object)) {
+              writeEntityLength2(object.size, 64);
+              yield target2.subarray(start, position3);
+              yield object;
+              restartEncoding();
+            } else if (object[Symbol.asyncIterator]) {
+              target2[position3++] = 159;
+              yield target2.subarray(start, position3);
+              yield object;
+              restartEncoding();
+              target2[position3++] = 255;
+            } else {
+              encode4(object);
+            }
+            if (finalIterable && position3 > start) yield target2.subarray(start, position3);
+            else if (position3 - start > chunkThreshold) {
+              yield target2.subarray(start, position3);
+              restartEncoding();
+            }
+          }
+          function* tryEncode(value, iterateProperties, key) {
+            let restart = position3 - start;
+            try {
+              encode4(value);
+              if (position3 - start > chunkThreshold) {
+                yield target2.subarray(start, position3);
+                restartEncoding();
+              }
+            } catch (error) {
+              if (error.iteratorNotHandled) {
+                iterateProperties[key] = {};
+                position3 = start + restart;
+                yield* encodeObjectAsIterable.call(this, value, iterateProperties[key]);
+              } else throw error;
+            }
+          }
+          function restartEncoding() {
+            chunkThreshold = continuedChunkThreshold;
+            encoder.encode(null, THROW_ON_ITERABLE2);
+          }
+          function startEncoding(value, options2, encodeIterable) {
+            if (options2 && options2.chunkThreshold)
+              chunkThreshold = continuedChunkThreshold = options2.chunkThreshold;
+            else
+              chunkThreshold = 100;
+            if (value && typeof value === "object") {
+              encoder.encode(null, THROW_ON_ITERABLE2);
+              return encodeIterable(value, encoder.iterateProperties || (encoder.iterateProperties = {}), true);
+            }
+            return [encoder.encode(value)];
+          }
+          async function* encodeObjectAsAsyncIterable(value, iterateProperties) {
+            for (let encodedValue of encodeObjectAsIterable(value, iterateProperties, true)) {
+              let constructor = encodedValue.constructor;
+              if (constructor === ByteArray2 || constructor === Uint8Array)
+                yield encodedValue;
+              else if (isBlob2(encodedValue)) {
+                let reader = encodedValue.stream().getReader();
+                let next;
+                while (!(next = await reader.read()).done) {
+                  yield next.value;
+                }
+              } else if (encodedValue[Symbol.asyncIterator]) {
+                for await (let asyncValue of encodedValue) {
+                  restartEncoding();
+                  if (asyncValue)
+                    yield* encodeObjectAsAsyncIterable(asyncValue, iterateProperties.async || (iterateProperties.async = {}));
+                  else yield encoder.encode(asyncValue);
+                }
+              } else {
+                yield encodedValue;
+              }
+            }
+          }
+        }
+        useBuffer(buffer) {
+          target2 = buffer;
+          targetView2 = new DataView(target2.buffer, target2.byteOffset, target2.byteLength);
+          position3 = 0;
+        }
+        clearSharedData() {
+          if (this.structures)
+            this.structures = [];
+          if (this.sharedValues)
+            this.sharedValues = void 0;
+        }
+        updateSharedData() {
+          let lastVersion = this.sharedVersion || 0;
+          this.sharedVersion = lastVersion + 1;
+          let structuresCopy = this.structures.slice(0);
+          let sharedData = new SharedData2(structuresCopy, this.sharedValues, this.sharedVersion);
+          let saveResults = this.saveShared(
+            sharedData,
+            (existingShared) => (existingShared && existingShared.version || 0) == lastVersion
+          );
+          if (saveResults === false) {
+            sharedData = this.getShared() || {};
+            this.structures = sharedData.structures || [];
+            this.sharedValues = sharedData.packedValues;
+            this.sharedVersion = sharedData.version;
+            this.structures.nextId = this.structures.length;
+          } else {
+            structuresCopy.forEach((structure, i) => this.structures[i] = structure);
+          }
+          return saveResults;
+        }
+      }
+      function writeEntityLength2(length, majorValue) {
+        if (length < 24)
+          target2[position3++] = majorValue | length;
+        else if (length < 256) {
+          target2[position3++] = majorValue | 24;
+          target2[position3++] = length;
+        } else if (length < 65536) {
+          target2[position3++] = majorValue | 25;
+          target2[position3++] = length >> 8;
+          target2[position3++] = length & 255;
+        } else {
+          target2[position3++] = majorValue | 26;
+          targetView2.setUint32(position3, length);
+          position3 += 4;
+        }
+      }
+      class SharedData2 {
+        constructor(structures, values, version) {
+          this.structures = structures;
+          this.packedValues = values;
+          this.version = version;
+        }
+      }
+      function writeArrayHeader2(length) {
+        if (length < 24)
+          target2[position3++] = 128 | length;
+        else if (length < 256) {
+          target2[position3++] = 152;
+          target2[position3++] = length;
+        } else if (length < 65536) {
+          target2[position3++] = 153;
+          target2[position3++] = length >> 8;
+          target2[position3++] = length & 255;
+        } else {
+          target2[position3++] = 154;
+          targetView2.setUint32(position3, length);
+          position3 += 4;
+        }
+      }
+      const BlobConstructor2 = typeof Blob === "undefined" ? function() {
+      } : Blob;
+      function isBlob2(object) {
+        if (object instanceof BlobConstructor2)
+          return true;
+        let tag = object[Symbol.toStringTag];
+        return tag === "Blob" || tag === "File";
+      }
+      function findRepetitiveStrings2(value, packedValues3) {
+        switch (typeof value) {
+          case "string":
+            if (value.length > 3) {
+              if (packedValues3.objectMap[value] > -1 || packedValues3.values.length >= packedValues3.maxValues)
+                return;
+              let packedStatus = packedValues3.get(value);
+              if (packedStatus) {
+                if (++packedStatus.count == 2) {
+                  packedValues3.values.push(value);
+                }
+              } else {
+                packedValues3.set(value, {
+                  count: 1
+                });
+                if (packedValues3.samplingPackedValues) {
+                  let status = packedValues3.samplingPackedValues.get(value);
+                  if (status)
+                    status.count++;
+                  else
+                    packedValues3.samplingPackedValues.set(value, {
+                      count: 1
+                    });
+                }
+              }
+            }
+            break;
+          case "object":
+            if (value) {
+              if (value instanceof Array) {
+                for (let i = 0, l = value.length; i < l; i++) {
+                  findRepetitiveStrings2(value[i], packedValues3);
+                }
+              } else {
+                let includeKeys = !packedValues3.encoder.useRecords;
+                for (var key in value) {
+                  if (value.hasOwnProperty(key)) {
+                    if (includeKeys)
+                      findRepetitiveStrings2(key, packedValues3);
+                    findRepetitiveStrings2(value[key], packedValues3);
+                  }
+                }
+              }
+            }
+            break;
+          case "function":
+            console.log(value);
+        }
+      }
+      const isLittleEndianMachine3 = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
+      extensionClasses2 = [
+        Date,
+        Set,
+        Error,
+        RegExp,
+        Tag2,
+        ArrayBuffer,
+        Uint8Array,
+        Uint8ClampedArray,
+        Uint16Array,
+        Uint32Array,
+        typeof BigUint64Array == "undefined" ? function() {
+        } : BigUint64Array,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        typeof BigInt64Array == "undefined" ? function() {
+        } : BigInt64Array,
+        Float32Array,
+        Float64Array,
+        SharedData2
+      ];
+      extensions2 = [
+        {
+          // Date
+          tag: 1,
+          encode(date, encode4) {
+            let seconds = date.getTime() / 1e3;
+            if ((this.useTimestamp32 || date.getMilliseconds() === 0) && seconds >= 0 && seconds < 4294967296) {
+              target2[position3++] = 26;
+              targetView2.setUint32(position3, seconds);
+              position3 += 4;
+            } else {
+              target2[position3++] = 251;
+              targetView2.setFloat64(position3, seconds);
+              position3 += 8;
+            }
+          }
+        },
+        {
+          // Set
+          tag: 258,
+          // https://github.com/input-output-hk/cbor-sets-spec/blob/master/CBOR_SETS.md
+          encode(set, encode4) {
+            let array = Array.from(set);
+            encode4(array);
+          }
+        },
+        {
+          // Error
+          tag: 27,
+          // http://cbor.schmorp.de/generic-object
+          encode(error, encode4) {
+            encode4([error.name, error.message]);
+          }
+        },
+        {
+          // RegExp
+          tag: 27,
+          // http://cbor.schmorp.de/generic-object
+          encode(regex, encode4) {
+            encode4(["RegExp", regex.source, regex.flags]);
+          }
+        },
+        {
+          // Tag
+          getTag(tag) {
+            return tag.tag;
+          },
+          encode(tag, encode4) {
+            encode4(tag.value);
+          }
+        },
+        {
+          // ArrayBuffer
+          encode(arrayBuffer, encode4, makeRoom) {
+            writeBuffer2(arrayBuffer, makeRoom);
+          }
+        },
+        {
+          // Uint8Array
+          getTag(typedArray) {
+            if (typedArray.constructor === Uint8Array) {
+              if (this.tagUint8Array || hasNodeBuffer2 && this.tagUint8Array !== false)
+                return 64;
+            }
+          },
+          encode(typedArray, encode4, makeRoom) {
+            writeBuffer2(typedArray, makeRoom);
+          }
+        },
+        typedArrayEncoder2(68, 1),
+        typedArrayEncoder2(69, 2),
+        typedArrayEncoder2(70, 4),
+        typedArrayEncoder2(71, 8),
+        typedArrayEncoder2(72, 1),
+        typedArrayEncoder2(77, 2),
+        typedArrayEncoder2(78, 4),
+        typedArrayEncoder2(79, 8),
+        typedArrayEncoder2(85, 4),
+        typedArrayEncoder2(86, 8),
+        {
+          encode(sharedData, encode4) {
+            let packedValues3 = sharedData.packedValues || [];
+            let sharedStructures = sharedData.structures || [];
+            if (packedValues3.values.length > 0) {
+              target2[position3++] = 216;
+              target2[position3++] = 51;
+              writeArrayHeader2(4);
+              let valuesArray = packedValues3.values;
+              encode4(valuesArray);
+              writeArrayHeader2(0);
+              writeArrayHeader2(0);
+              packedObjectMap = Object.create(sharedPackedObjectMap || null);
+              for (let i = 0, l = valuesArray.length; i < l; i++) {
+                packedObjectMap[valuesArray[i]] = i;
+              }
+            }
+            if (sharedStructures) {
+              targetView2.setUint32(position3, 3655335424);
+              position3 += 3;
+              let definitions = sharedStructures.slice(0);
+              definitions.unshift(57344);
+              definitions.push(new Tag2(sharedData.version, 1399353956));
+              encode4(definitions);
+            } else
+              encode4(new Tag2(sharedData.version, 1399353956));
+          }
+        }
+      ];
+      function typedArrayEncoder2(tag, size) {
+        if (!isLittleEndianMachine3 && size > 1)
+          tag -= 4;
+        return {
+          tag,
+          encode: function writeExtBuffer(typedArray, encode4) {
+            let length = typedArray.byteLength;
+            let offset = typedArray.byteOffset || 0;
+            let buffer = typedArray.buffer || typedArray;
+            encode4(hasNodeBuffer2 ? Buffer$1.from(buffer, offset, length) : new Uint8Array(buffer, offset, length));
+          }
+        };
+      }
+      function writeBuffer2(buffer, makeRoom) {
+        let length = buffer.byteLength;
+        if (length < 24) {
+          target2[position3++] = 64 + length;
+        } else if (length < 256) {
+          target2[position3++] = 88;
+          target2[position3++] = length;
+        } else if (length < 65536) {
+          target2[position3++] = 89;
+          target2[position3++] = length >> 8;
+          target2[position3++] = length & 255;
+        } else {
+          target2[position3++] = 90;
+          targetView2.setUint32(position3, length);
+          position3 += 4;
+        }
+        if (position3 + length >= target2.length) {
+          makeRoom(position3 + length);
+        }
+        target2.set(buffer.buffer ? buffer : new Uint8Array(buffer), position3);
+        position3 += length;
+      }
+      function insertIds2(serialized, idsToInsert) {
+        let nextId;
+        let distanceToMove = idsToInsert.length * 2;
+        let lastEnd = serialized.length - distanceToMove;
+        idsToInsert.sort((a, b) => a.offset > b.offset ? 1 : -1);
+        for (let id = 0; id < idsToInsert.length; id++) {
+          let referee = idsToInsert[id];
+          referee.id = id;
+          for (let position4 of referee.references) {
+            serialized[position4++] = id >> 8;
+            serialized[position4] = id & 255;
+          }
+        }
+        while (nextId = idsToInsert.pop()) {
+          let offset = nextId.offset;
+          serialized.copyWithin(offset + distanceToMove, offset, lastEnd);
+          distanceToMove -= 2;
+          let position4 = offset + distanceToMove;
+          serialized[position4++] = 216;
+          serialized[position4++] = 28;
+          lastEnd = offset;
+        }
+        return serialized;
+      }
+      function writeBundles2(start, encode4) {
+        targetView2.setUint32(bundledStrings3.position + start, position3 - bundledStrings3.position - start + 1);
+        let writeStrings = bundledStrings3;
+        bundledStrings3 = null;
+        encode4(writeStrings[0]);
+        encode4(writeStrings[1]);
+      }
+      function addExtension3(extension) {
+        if (extension.Class) {
+          if (!extension.encode)
+            throw new Error("Extension has no encode function");
+          extensionClasses2.unshift(extension.Class);
+          extensions2.unshift(extension);
+        }
+        addExtension$1(extension);
+      }
+      let defaultEncoder2 = new Encoder3({ useRecords: false });
+      const encode3 = defaultEncoder2.encode;
+      const encodeAsIterable2 = defaultEncoder2.encodeAsIterable;
+      const encodeAsAsyncIterable2 = defaultEncoder2.encodeAsAsyncIterable;
+      const { NEVER: NEVER2, ALWAYS: ALWAYS2, DECIMAL_ROUND: DECIMAL_ROUND2, DECIMAL_FIT: DECIMAL_FIT2 } = FLOAT32_OPTIONS2;
+      const REUSE_BUFFER_MODE2 = 512;
+      const RESET_BUFFER_MODE2 = 1024;
+      const THROW_ON_ITERABLE2 = 2048;
+      function encodeIter2(objectIterator, options = {}) {
+        if (!objectIterator || typeof objectIterator !== "object") {
+          throw new Error("first argument must be an Iterable, Async Iterable, or a Promise for an Async Iterable");
+        } else if (typeof objectIterator[Symbol.iterator] === "function") {
+          return encodeIterSync(objectIterator, options);
+        } else if (typeof objectIterator.then === "function" || typeof objectIterator[Symbol.asyncIterator] === "function") {
+          return encodeIterAsync(objectIterator, options);
+        } else {
+          throw new Error("first argument must be an Iterable, Async Iterable, Iterator, Async Iterator, or a Promise");
+        }
+      }
+      function* encodeIterSync(objectIterator, options) {
+        const encoder = new Encoder3(options);
+        for (const value of objectIterator) {
+          yield encoder.encode(value);
+        }
+      }
+      async function* encodeIterAsync(objectIterator, options) {
+        const encoder = new Encoder3(options);
+        for await (const value of objectIterator) {
+          yield encoder.encode(value);
+        }
+      }
+      function decodeIter2(bufferIterator, options = {}) {
+        if (!bufferIterator || typeof bufferIterator !== "object") {
+          throw new Error("first argument must be an Iterable, Async Iterable, Iterator, Async Iterator, or a promise");
+        }
+        const decoder3 = new Decoder3(options);
+        let incomplete;
+        const parser = (chunk) => {
+          let yields;
+          if (incomplete) {
+            chunk = Buffer.concat([incomplete, chunk]);
+            incomplete = void 0;
+          }
+          try {
+            yields = decoder3.decodeMultiple(chunk);
+          } catch (err) {
+            if (err.incomplete) {
+              incomplete = chunk.slice(err.lastPosition);
+              yields = err.values;
+            } else {
+              throw err;
+            }
+          }
+          return yields;
+        };
+        if (typeof bufferIterator[Symbol.iterator] === "function") {
+          return (function* iter() {
+            for (const value of bufferIterator) {
+              yield* parser(value);
+            }
+          })();
+        } else if (typeof bufferIterator[Symbol.asyncIterator] === "function") {
+          return (async function* iter() {
+            for await (const value of bufferIterator) {
+              yield* parser(value);
+            }
+          })();
+        }
+      }
+      exports2.ALWAYS = ALWAYS2;
+      exports2.DECIMAL_FIT = DECIMAL_FIT2;
+      exports2.DECIMAL_ROUND = DECIMAL_ROUND2;
+      exports2.Decoder = Decoder3;
+      exports2.Encoder = Encoder3;
+      exports2.FLOAT32_OPTIONS = FLOAT32_OPTIONS2;
+      exports2.NEVER = NEVER2;
+      exports2.REUSE_BUFFER_MODE = REUSE_BUFFER_MODE2;
+      exports2.Tag = Tag2;
+      exports2.addExtension = addExtension3;
+      exports2.clearSource = clearSource2;
+      exports2.decode = decode3;
+      exports2.decodeIter = decodeIter2;
+      exports2.decodeMultiple = decodeMultiple2;
+      exports2.encode = encode3;
+      exports2.encodeAsAsyncIterable = encodeAsAsyncIterable2;
+      exports2.encodeAsIterable = encodeAsIterable2;
+      exports2.encodeIter = encodeIter2;
+      exports2.isNativeAccelerationEnabled = isNativeAccelerationEnabled2;
+      exports2.roundFloat32 = roundFloat322;
+      exports2.setSizeLimits = setSizeLimits;
+    }));
+  }
+});
+
+// node_modules/ws/browser.js
 var require_browser = __commonJS({
-  "../wanix-ferrule-stdio/node_modules/ws/browser.js"(exports, module) {
+  "node_modules/ws/browser.js"(exports, module) {
     "use strict";
     module.exports = function() {
       throw new Error(
@@ -46,2245 +2394,8 @@ var require_browser = __commonJS({
   }
 });
 
-// ../wanix-ferrule-stdio/node_modules/cbor-x/decode.js
-var decoder;
-try {
-  decoder = new TextDecoder();
-} catch (error) {
-}
-var src;
-var srcEnd;
-var position = 0;
-var EMPTY_ARRAY = [];
-var LEGACY_RECORD_INLINE_ID = 105;
-var RECORD_DEFINITIONS_ID = 57342;
-var RECORD_INLINE_ID = 57343;
-var BUNDLED_STRINGS_ID = 57337;
-var PACKED_REFERENCE_TAG_ID = 6;
-var STOP_CODE = {};
-var maxArraySize = 11281e4;
-var maxMapSize = 1681e4;
-var strings = EMPTY_ARRAY;
-var stringPosition = 0;
-var currentDecoder = {};
-var currentStructures;
-var srcString;
-var srcStringStart = 0;
-var srcStringEnd = 0;
-var bundledStrings;
-var referenceMap;
-var currentExtensions = [];
-var currentExtensionRanges = [];
-var packedValues;
-var dataView;
-var restoreMapsAsObject;
-var defaultOptions = {
-  useRecords: false,
-  mapsAsObjects: true
-};
-var sequentialMode = false;
-var inlineObjectReadThreshold = 2;
-try {
-  new Function("");
-} catch (error) {
-  inlineObjectReadThreshold = Infinity;
-}
-var Decoder = class _Decoder {
-  constructor(options) {
-    if (options) {
-      if ((options.keyMap || options._keyMap) && !options.useRecords) {
-        options.useRecords = false;
-        options.mapsAsObjects = true;
-      }
-      if (options.useRecords === false && options.mapsAsObjects === void 0)
-        options.mapsAsObjects = true;
-      if (options.getStructures)
-        options.getShared = options.getStructures;
-      if (options.getShared && !options.structures)
-        (options.structures = []).uninitialized = true;
-      if (options.keyMap) {
-        this.mapKey = /* @__PURE__ */ new Map();
-        for (let [k, v] of Object.entries(options.keyMap)) this.mapKey.set(v, k);
-      }
-    }
-    Object.assign(this, options);
-  }
-  /*
-  decodeKey(key) {
-  	return this.keyMap
-  		? Object.keys(this.keyMap)[Object.values(this.keyMap).indexOf(key)] || key
-  		: key
-  }
-  */
-  decodeKey(key) {
-    return this.keyMap ? this.mapKey.get(key) || key : key;
-  }
-  encodeKey(key) {
-    return this.keyMap && this.keyMap.hasOwnProperty(key) ? this.keyMap[key] : key;
-  }
-  encodeKeys(rec) {
-    if (!this._keyMap) return rec;
-    let map = /* @__PURE__ */ new Map();
-    for (let [k, v] of Object.entries(rec)) map.set(this._keyMap.hasOwnProperty(k) ? this._keyMap[k] : k, v);
-    return map;
-  }
-  decodeKeys(map) {
-    if (!this._keyMap || map.constructor.name != "Map") return map;
-    if (!this._mapKey) {
-      this._mapKey = /* @__PURE__ */ new Map();
-      for (let [k, v] of Object.entries(this._keyMap)) this._mapKey.set(v, k);
-    }
-    let res = {};
-    map.forEach((v, k) => res[safeKey(this._mapKey.has(k) ? this._mapKey.get(k) : k)] = v);
-    return res;
-  }
-  mapDecode(source, end) {
-    let res = this.decode(source);
-    if (this._keyMap) {
-      switch (res.constructor.name) {
-        case "Array":
-          return res.map((r) => this.decodeKeys(r));
-      }
-    }
-    return res;
-  }
-  decode(source, end) {
-    if (src) {
-      return saveState(() => {
-        clearSource();
-        return this ? this.decode(source, end) : _Decoder.prototype.decode.call(defaultOptions, source, end);
-      });
-    }
-    srcEnd = end > -1 ? end : source.length;
-    position = 0;
-    stringPosition = 0;
-    srcStringEnd = 0;
-    srcString = null;
-    strings = EMPTY_ARRAY;
-    bundledStrings = null;
-    src = source;
-    try {
-      dataView = source.dataView || (source.dataView = new DataView(source.buffer, source.byteOffset, source.byteLength));
-    } catch (error) {
-      src = null;
-      if (source instanceof Uint8Array)
-        throw error;
-      throw new Error("Source must be a Uint8Array or Buffer but was a " + (source && typeof source == "object" ? source.constructor.name : typeof source));
-    }
-    if (this instanceof _Decoder) {
-      currentDecoder = this;
-      packedValues = this.sharedValues && (this.pack ? new Array(this.maxPrivatePackedValues || 16).concat(this.sharedValues) : this.sharedValues);
-      if (this.structures) {
-        currentStructures = this.structures;
-        return checkedRead();
-      } else if (!currentStructures || currentStructures.length > 0) {
-        currentStructures = [];
-      }
-    } else {
-      currentDecoder = defaultOptions;
-      if (!currentStructures || currentStructures.length > 0)
-        currentStructures = [];
-      packedValues = null;
-    }
-    return checkedRead();
-  }
-  decodeMultiple(source, forEach) {
-    let values, lastPosition = 0;
-    try {
-      let size = source.length;
-      sequentialMode = true;
-      let value = this ? this.decode(source, size) : defaultDecoder.decode(source, size);
-      if (forEach) {
-        if (forEach(value) === false) {
-          return;
-        }
-        while (position < size) {
-          lastPosition = position;
-          if (forEach(checkedRead()) === false) {
-            return;
-          }
-        }
-      } else {
-        values = [value];
-        while (position < size) {
-          lastPosition = position;
-          values.push(checkedRead());
-        }
-        return values;
-      }
-    } catch (error) {
-      error.lastPosition = lastPosition;
-      error.values = values;
-      throw error;
-    } finally {
-      sequentialMode = false;
-      clearSource();
-    }
-  }
-};
-function checkedRead() {
-  try {
-    let result = read();
-    if (bundledStrings) {
-      if (position >= bundledStrings.postBundlePosition) {
-        let error = new Error("Unexpected bundle position");
-        error.incomplete = true;
-        throw error;
-      }
-      position = bundledStrings.postBundlePosition;
-      bundledStrings = null;
-    }
-    if (position == srcEnd) {
-      currentStructures = null;
-      src = null;
-      if (referenceMap)
-        referenceMap = null;
-    } else if (position > srcEnd) {
-      let error = new Error("Unexpected end of CBOR data");
-      error.incomplete = true;
-      throw error;
-    } else if (!sequentialMode) {
-      throw new Error("Data read, but end of buffer not reached");
-    }
-    return result;
-  } catch (error) {
-    clearSource();
-    if (error instanceof RangeError || error.message.startsWith("Unexpected end of buffer")) {
-      error.incomplete = true;
-    }
-    throw error;
-  }
-}
-function read() {
-  let token = src[position++];
-  let majorType = token >> 5;
-  token = token & 31;
-  if (token > 23) {
-    switch (token) {
-      case 24:
-        token = src[position++];
-        break;
-      case 25:
-        if (majorType == 7) {
-          return getFloat16();
-        }
-        token = dataView.getUint16(position);
-        position += 2;
-        break;
-      case 26:
-        if (majorType == 7) {
-          let value = dataView.getFloat32(position);
-          if (currentDecoder.useFloat32 > 2) {
-            let multiplier = mult10[(src[position] & 127) << 1 | src[position + 1] >> 7];
-            position += 4;
-            return (multiplier * value + (value > 0 ? 0.5 : -0.5) >> 0) / multiplier;
-          }
-          position += 4;
-          return value;
-        }
-        token = dataView.getUint32(position);
-        position += 4;
-        break;
-      case 27:
-        if (majorType == 7) {
-          let value = dataView.getFloat64(position);
-          position += 8;
-          return value;
-        }
-        if (majorType > 1) {
-          if (dataView.getUint32(position) > 0)
-            throw new Error("JavaScript does not support arrays, maps, or strings with length over 4294967295");
-          token = dataView.getUint32(position + 4);
-        } else if (currentDecoder.int64AsNumber) {
-          token = dataView.getUint32(position) * 4294967296;
-          token += dataView.getUint32(position + 4);
-        } else
-          token = dataView.getBigUint64(position);
-        position += 8;
-        break;
-      case 31:
-        switch (majorType) {
-          case 2:
-          // byte string
-          case 3:
-            throw new Error("Indefinite length not supported for byte or text strings");
-          case 4:
-            let array = [];
-            let value, i = 0;
-            while ((value = read()) != STOP_CODE) {
-              if (i >= maxArraySize) throw new Error(`Array length exceeds ${maxArraySize}`);
-              array[i++] = value;
-            }
-            return majorType == 4 ? array : majorType == 3 ? array.join("") : Buffer.concat(array);
-          case 5:
-            let key;
-            if (currentDecoder.mapsAsObjects) {
-              let object = {};
-              let i2 = 0;
-              if (currentDecoder.keyMap) {
-                while ((key = read()) != STOP_CODE) {
-                  if (i2++ >= maxMapSize) throw new Error(`Property count exceeds ${maxMapSize}`);
-                  object[safeKey(currentDecoder.decodeKey(key))] = read();
-                }
-              } else {
-                while ((key = read()) != STOP_CODE) {
-                  if (i2++ >= maxMapSize) throw new Error(`Property count exceeds ${maxMapSize}`);
-                  object[safeKey(key)] = read();
-                }
-              }
-              return object;
-            } else {
-              if (restoreMapsAsObject) {
-                currentDecoder.mapsAsObjects = true;
-                restoreMapsAsObject = false;
-              }
-              let map = /* @__PURE__ */ new Map();
-              if (currentDecoder.keyMap) {
-                let i2 = 0;
-                while ((key = read()) != STOP_CODE) {
-                  if (i2++ >= maxMapSize) {
-                    throw new Error(`Map size exceeds ${maxMapSize}`);
-                  }
-                  map.set(currentDecoder.decodeKey(key), read());
-                }
-              } else {
-                let i2 = 0;
-                while ((key = read()) != STOP_CODE) {
-                  if (i2++ >= maxMapSize) {
-                    throw new Error(`Map size exceeds ${maxMapSize}`);
-                  }
-                  map.set(key, read());
-                }
-              }
-              return map;
-            }
-          case 7:
-            return STOP_CODE;
-          default:
-            throw new Error("Invalid major type for indefinite length " + majorType);
-        }
-      default:
-        throw new Error("Unknown token " + token);
-    }
-  }
-  switch (majorType) {
-    case 0:
-      return token;
-    case 1:
-      return ~token;
-    case 2:
-      return readBin(token);
-    case 3:
-      if (srcStringEnd >= position) {
-        return srcString.slice(position - srcStringStart, (position += token) - srcStringStart);
-      }
-      if (srcStringEnd == 0 && srcEnd < 140 && token < 32) {
-        let string = token < 16 ? shortStringInJS(token) : longStringInJS(token);
-        if (string != null)
-          return string;
-      }
-      return readFixedString(token);
-    case 4:
-      if (token >= maxArraySize) throw new Error(`Array length exceeds ${maxArraySize}`);
-      let array = new Array(token);
-      for (let i = 0; i < token; i++) array[i] = read();
-      return array;
-    case 5:
-      if (token >= maxMapSize) throw new Error(`Map size exceeds ${maxArraySize}`);
-      if (currentDecoder.mapsAsObjects) {
-        let object = {};
-        if (currentDecoder.keyMap) for (let i = 0; i < token; i++) object[safeKey(currentDecoder.decodeKey(read()))] = read();
-        else for (let i = 0; i < token; i++) object[safeKey(read())] = read();
-        return object;
-      } else {
-        if (restoreMapsAsObject) {
-          currentDecoder.mapsAsObjects = true;
-          restoreMapsAsObject = false;
-        }
-        let map = /* @__PURE__ */ new Map();
-        if (currentDecoder.keyMap) for (let i = 0; i < token; i++) map.set(currentDecoder.decodeKey(read()), read());
-        else for (let i = 0; i < token; i++) map.set(read(), read());
-        return map;
-      }
-    case 6:
-      if (token >= BUNDLED_STRINGS_ID) {
-        let structure = currentStructures[token & 8191];
-        if (structure) {
-          if (!structure.read) structure.read = createStructureReader(structure);
-          return structure.read();
-        }
-        if (token < 65536) {
-          if (token == RECORD_INLINE_ID) {
-            let length = readJustLength();
-            let id = read();
-            let structure2 = read();
-            recordDefinition(id, structure2);
-            let object = {};
-            if (currentDecoder.keyMap) for (let i = 2; i < length; i++) {
-              let key = currentDecoder.decodeKey(structure2[i - 2]);
-              object[safeKey(key)] = read();
-            }
-            else for (let i = 2; i < length; i++) {
-              let key = structure2[i - 2];
-              object[safeKey(key)] = read();
-            }
-            return object;
-          } else if (token == RECORD_DEFINITIONS_ID) {
-            let length = readJustLength();
-            let id = read();
-            for (let i = 2; i < length; i++) {
-              recordDefinition(id++, read());
-            }
-            return read();
-          } else if (token == BUNDLED_STRINGS_ID) {
-            return readBundleExt();
-          }
-          if (currentDecoder.getShared) {
-            loadShared();
-            structure = currentStructures[token & 8191];
-            if (structure) {
-              if (!structure.read)
-                structure.read = createStructureReader(structure);
-              return structure.read();
-            }
-          }
-        }
-      }
-      let extension = currentExtensions[token];
-      if (extension) {
-        if (extension.handlesRead)
-          return extension(read);
-        else
-          return extension(read());
-      } else {
-        let input = read();
-        for (let i = 0; i < currentExtensionRanges.length; i++) {
-          let value = currentExtensionRanges[i](token, input);
-          if (value !== void 0)
-            return value;
-        }
-        return new Tag(input, token);
-      }
-    case 7:
-      switch (token) {
-        case 20:
-          return false;
-        case 21:
-          return true;
-        case 22:
-          return null;
-        case 23:
-          return;
-        // undefined
-        case 31:
-        default:
-          let packedValue = (packedValues || getPackedValues())[token];
-          if (packedValue !== void 0)
-            return packedValue;
-          throw new Error("Unknown token " + token);
-      }
-    default:
-      if (isNaN(token)) {
-        let error = new Error("Unexpected end of CBOR data");
-        error.incomplete = true;
-        throw error;
-      }
-      throw new Error("Unknown CBOR token " + token);
-  }
-}
-var validName = /^[a-zA-Z_$][a-zA-Z\d_$]*$/;
-function createStructureReader(structure) {
-  if (!structure) throw new Error("Structure is required in record definition");
-  function readObject() {
-    let length = src[position++];
-    length = length & 31;
-    if (length > 23) {
-      switch (length) {
-        case 24:
-          length = src[position++];
-          break;
-        case 25:
-          length = dataView.getUint16(position);
-          position += 2;
-          break;
-        case 26:
-          length = dataView.getUint32(position);
-          position += 4;
-          break;
-        default:
-          throw new Error("Expected array header, but got " + src[position - 1]);
-      }
-    }
-    let compiledReader = this.compiledReader;
-    while (compiledReader) {
-      if (compiledReader.propertyCount === length)
-        return compiledReader(read);
-      compiledReader = compiledReader.next;
-    }
-        let object = {};
-    if (currentDecoder.keyMap) for (let i = 0; i < length; i++) object[safeKey(currentDecoder.decodeKey(this[i]))] = read();
-    else for (let i = 0; i < length; i++) {
-      object[safeKey(this[i])] = read();
-    }
-    return object;
-  }
-  structure.slowReads = 0;
-  return readObject;
-}
-function safeKey(key) {
-  if (typeof key === "string") return key === "__proto__" ? "__proto_" : key;
-  if (typeof key === "number" || typeof key === "boolean" || typeof key === "bigint") return key.toString();
-  if (key == null) return key + "";
-  throw new Error("Invalid property name type " + typeof key);
-}
-var readFixedString = readStringJS;
-function readStringJS(length) {
-  let result;
-  if (length < 16) {
-    if (result = shortStringInJS(length))
-      return result;
-  }
-  if (length > 64 && decoder)
-    return decoder.decode(src.subarray(position, position += length));
-  const end = position + length;
-  const units = [];
-  result = "";
-  while (position < end) {
-    const byte1 = src[position++];
-    if ((byte1 & 128) === 0) {
-      units.push(byte1);
-    } else if ((byte1 & 224) === 192) {
-      const byte2 = src[position++] & 63;
-      units.push((byte1 & 31) << 6 | byte2);
-    } else if ((byte1 & 240) === 224) {
-      const byte2 = src[position++] & 63;
-      const byte3 = src[position++] & 63;
-      units.push((byte1 & 31) << 12 | byte2 << 6 | byte3);
-    } else if ((byte1 & 248) === 240) {
-      const byte2 = src[position++] & 63;
-      const byte3 = src[position++] & 63;
-      const byte4 = src[position++] & 63;
-      let unit = (byte1 & 7) << 18 | byte2 << 12 | byte3 << 6 | byte4;
-      if (unit > 65535) {
-        unit -= 65536;
-        units.push(unit >>> 10 & 1023 | 55296);
-        unit = 56320 | unit & 1023;
-      }
-      units.push(unit);
-    } else {
-      units.push(byte1);
-    }
-    if (units.length >= 4096) {
-      result += fromCharCode.apply(String, units);
-      units.length = 0;
-    }
-  }
-  if (units.length > 0) {
-    result += fromCharCode.apply(String, units);
-  }
-  return result;
-}
-var fromCharCode = String.fromCharCode;
-function longStringInJS(length) {
-  let start = position;
-  let bytes = new Array(length);
-  for (let i = 0; i < length; i++) {
-    const byte = src[position++];
-    if ((byte & 128) > 0) {
-      position = start;
-      return;
-    }
-    bytes[i] = byte;
-  }
-  return fromCharCode.apply(String, bytes);
-}
-function shortStringInJS(length) {
-  if (length < 4) {
-    if (length < 2) {
-      if (length === 0)
-        return "";
-      else {
-        let a = src[position++];
-        if ((a & 128) > 1) {
-          position -= 1;
-          return;
-        }
-        return fromCharCode(a);
-      }
-    } else {
-      let a = src[position++];
-      let b = src[position++];
-      if ((a & 128) > 0 || (b & 128) > 0) {
-        position -= 2;
-        return;
-      }
-      if (length < 3)
-        return fromCharCode(a, b);
-      let c = src[position++];
-      if ((c & 128) > 0) {
-        position -= 3;
-        return;
-      }
-      return fromCharCode(a, b, c);
-    }
-  } else {
-    let a = src[position++];
-    let b = src[position++];
-    let c = src[position++];
-    let d = src[position++];
-    if ((a & 128) > 0 || (b & 128) > 0 || (c & 128) > 0 || (d & 128) > 0) {
-      position -= 4;
-      return;
-    }
-    if (length < 6) {
-      if (length === 4)
-        return fromCharCode(a, b, c, d);
-      else {
-        let e = src[position++];
-        if ((e & 128) > 0) {
-          position -= 5;
-          return;
-        }
-        return fromCharCode(a, b, c, d, e);
-      }
-    } else if (length < 8) {
-      let e = src[position++];
-      let f = src[position++];
-      if ((e & 128) > 0 || (f & 128) > 0) {
-        position -= 6;
-        return;
-      }
-      if (length < 7)
-        return fromCharCode(a, b, c, d, e, f);
-      let g = src[position++];
-      if ((g & 128) > 0) {
-        position -= 7;
-        return;
-      }
-      return fromCharCode(a, b, c, d, e, f, g);
-    } else {
-      let e = src[position++];
-      let f = src[position++];
-      let g = src[position++];
-      let h = src[position++];
-      if ((e & 128) > 0 || (f & 128) > 0 || (g & 128) > 0 || (h & 128) > 0) {
-        position -= 8;
-        return;
-      }
-      if (length < 10) {
-        if (length === 8)
-          return fromCharCode(a, b, c, d, e, f, g, h);
-        else {
-          let i = src[position++];
-          if ((i & 128) > 0) {
-            position -= 9;
-            return;
-          }
-          return fromCharCode(a, b, c, d, e, f, g, h, i);
-        }
-      } else if (length < 12) {
-        let i = src[position++];
-        let j = src[position++];
-        if ((i & 128) > 0 || (j & 128) > 0) {
-          position -= 10;
-          return;
-        }
-        if (length < 11)
-          return fromCharCode(a, b, c, d, e, f, g, h, i, j);
-        let k = src[position++];
-        if ((k & 128) > 0) {
-          position -= 11;
-          return;
-        }
-        return fromCharCode(a, b, c, d, e, f, g, h, i, j, k);
-      } else {
-        let i = src[position++];
-        let j = src[position++];
-        let k = src[position++];
-        let l = src[position++];
-        if ((i & 128) > 0 || (j & 128) > 0 || (k & 128) > 0 || (l & 128) > 0) {
-          position -= 12;
-          return;
-        }
-        if (length < 14) {
-          if (length === 12)
-            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l);
-          else {
-            let m = src[position++];
-            if ((m & 128) > 0) {
-              position -= 13;
-              return;
-            }
-            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m);
-          }
-        } else {
-          let m = src[position++];
-          let n = src[position++];
-          if ((m & 128) > 0 || (n & 128) > 0) {
-            position -= 14;
-            return;
-          }
-          if (length < 15)
-            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
-          let o = src[position++];
-          if ((o & 128) > 0) {
-            position -= 15;
-            return;
-          }
-          return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
-        }
-      }
-    }
-  }
-}
-function readBin(length) {
-  return currentDecoder.copyBuffers ? (
-    // specifically use the copying slice (not the node one)
-    Uint8Array.prototype.slice.call(src, position, position += length)
-  ) : src.subarray(position, position += length);
-}
-var f32Array = new Float32Array(1);
-var u8Array = new Uint8Array(f32Array.buffer, 0, 4);
-function getFloat16() {
-  let byte0 = src[position++];
-  let byte1 = src[position++];
-  let exponent = (byte0 & 127) >> 2;
-  if (exponent === 31) {
-    if (byte1 || byte0 & 3)
-      return NaN;
-    return byte0 & 128 ? -Infinity : Infinity;
-  }
-  if (exponent === 0) {
-    let abs = ((byte0 & 3) << 8 | byte1) / (1 << 24);
-    return byte0 & 128 ? -abs : abs;
-  }
-  u8Array[3] = byte0 & 128 | // sign bit
-  (exponent >> 1) + 56;
-  u8Array[2] = (byte0 & 7) << 5 | // last exponent bit and first two mantissa bits
-  byte1 >> 3;
-  u8Array[1] = byte1 << 5;
-  u8Array[0] = 0;
-  return f32Array[0];
-}
-var keyCache = new Array(4096);
-var Tag = class {
-  constructor(value, tag) {
-    this.value = value;
-    this.tag = tag;
-  }
-};
-currentExtensions[0] = (dateString) => {
-  return new Date(dateString);
-};
-currentExtensions[1] = (epochSec) => {
-  return new Date(Math.round(epochSec * 1e3));
-};
-currentExtensions[2] = (buffer) => {
-  let value = BigInt(0);
-  for (let i = 0, l = buffer.byteLength; i < l; i++) {
-    value = BigInt(buffer[i]) + (value << BigInt(8));
-  }
-  return value;
-};
-currentExtensions[3] = (buffer) => {
-  return BigInt(-1) - currentExtensions[2](buffer);
-};
-currentExtensions[4] = (fraction) => {
-  return +(fraction[1] + "e" + fraction[0]);
-};
-currentExtensions[5] = (fraction) => {
-  return fraction[1] * Math.exp(fraction[0] * Math.log(2));
-};
-var recordDefinition = (id, structure) => {
-  id = id - 57344;
-  let existingStructure = currentStructures[id];
-  if (existingStructure && existingStructure.isShared) {
-    (currentStructures.restoreStructures || (currentStructures.restoreStructures = []))[id] = existingStructure;
-  }
-  currentStructures[id] = structure;
-  structure.read = createStructureReader(structure);
-};
-currentExtensions[LEGACY_RECORD_INLINE_ID] = (data) => {
-  let length = data.length;
-  let structure = data[1];
-  recordDefinition(data[0], structure);
-  let object = {};
-  for (let i = 2; i < length; i++) {
-    let key = structure[i - 2];
-    object[safeKey(key)] = data[i];
-  }
-  return object;
-};
-currentExtensions[14] = (value) => {
-  if (bundledStrings)
-    return bundledStrings[0].slice(bundledStrings.position0, bundledStrings.position0 += value);
-  return new Tag(value, 14);
-};
-currentExtensions[15] = (value) => {
-  if (bundledStrings)
-    return bundledStrings[1].slice(bundledStrings.position1, bundledStrings.position1 += value);
-  return new Tag(value, 15);
-};
-var glbl = { Error, RegExp };
-currentExtensions[27] = (data) => {
-  return (glbl[data[0]] || Error)(data[1], data[2]);
-};
-var packedTable = (read3) => {
-  if (src[position++] != 132) {
-    let error = new Error("Packed values structure must be followed by a 4 element array");
-    if (src.length < position)
-      error.incomplete = true;
-    throw error;
-  }
-  let newPackedValues = read3();
-  if (!newPackedValues || !newPackedValues.length) {
-    let error = new Error("Packed values structure must be followed by a 4 element array");
-    error.incomplete = true;
-    throw error;
-  }
-  packedValues = packedValues ? newPackedValues.concat(packedValues.slice(newPackedValues.length)) : newPackedValues;
-  packedValues.prefixes = read3();
-  packedValues.suffixes = read3();
-  return read3();
-};
-packedTable.handlesRead = true;
-currentExtensions[51] = packedTable;
-currentExtensions[PACKED_REFERENCE_TAG_ID] = (data) => {
-  if (!packedValues) {
-    if (currentDecoder.getShared)
-      loadShared();
-    else
-      return new Tag(data, PACKED_REFERENCE_TAG_ID);
-  }
-  if (typeof data == "number")
-    return packedValues[16 + (data >= 0 ? 2 * data : -2 * data - 1)];
-  let error = new Error("No support for non-integer packed references yet");
-  if (data === void 0)
-    error.incomplete = true;
-  throw error;
-};
-currentExtensions[28] = (read3) => {
-  if (!referenceMap) {
-    referenceMap = /* @__PURE__ */ new Map();
-    referenceMap.id = 0;
-  }
-  let id = referenceMap.id++;
-  let startingPosition = position;
-  let token = src[position];
-  let target3;
-  if (token >> 5 == 4)
-    target3 = [];
-  else
-    target3 = {};
-  let refEntry = { target: target3 };
-  referenceMap.set(id, refEntry);
-  let targetProperties = read3();
-  if (refEntry.used) {
-    if (Object.getPrototypeOf(target3) !== Object.getPrototypeOf(targetProperties)) {
-      position = startingPosition;
-      target3 = targetProperties;
-      referenceMap.set(id, { target: target3 });
-      targetProperties = read3();
-    }
-    return Object.assign(target3, targetProperties);
-  }
-  refEntry.target = targetProperties;
-  return targetProperties;
-};
-currentExtensions[28].handlesRead = true;
-currentExtensions[29] = (id) => {
-  let refEntry = referenceMap.get(id);
-  refEntry.used = true;
-  return refEntry.target;
-};
-currentExtensions[258] = (array) => new Set(array);
-(currentExtensions[259] = (read3) => {
-  if (currentDecoder.mapsAsObjects) {
-    currentDecoder.mapsAsObjects = false;
-    restoreMapsAsObject = true;
-  }
-  return read3();
-}).handlesRead = true;
-function combine(a, b) {
-  if (typeof a === "string")
-    return a + b;
-  if (a instanceof Array)
-    return a.concat(b);
-  return Object.assign({}, a, b);
-}
-function getPackedValues() {
-  if (!packedValues) {
-    if (currentDecoder.getShared)
-      loadShared();
-    else
-      throw new Error("No packed values available");
-  }
-  return packedValues;
-}
-var SHARED_DATA_TAG_ID = 1399353956;
-currentExtensionRanges.push((tag, input) => {
-  if (tag >= 225 && tag <= 255)
-    return combine(getPackedValues().prefixes[tag - 224], input);
-  if (tag >= 28704 && tag <= 32767)
-    return combine(getPackedValues().prefixes[tag - 28672], input);
-  if (tag >= 1879052288 && tag <= 2147483647)
-    return combine(getPackedValues().prefixes[tag - 1879048192], input);
-  if (tag >= 216 && tag <= 223)
-    return combine(input, getPackedValues().suffixes[tag - 216]);
-  if (tag >= 27647 && tag <= 28671)
-    return combine(input, getPackedValues().suffixes[tag - 27639]);
-  if (tag >= 1811940352 && tag <= 1879048191)
-    return combine(input, getPackedValues().suffixes[tag - 1811939328]);
-  if (tag == SHARED_DATA_TAG_ID) {
-    return {
-      packedValues,
-      structures: currentStructures.slice(0),
-      version: input
-    };
-  }
-  if (tag == 55799)
-    return input;
-});
-var isLittleEndianMachine = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
-var typedArrays = [
-  Uint8Array,
-  Uint8ClampedArray,
-  Uint16Array,
-  Uint32Array,
-  typeof BigUint64Array == "undefined" ? { name: "BigUint64Array" } : BigUint64Array,
-  Int8Array,
-  Int16Array,
-  Int32Array,
-  typeof BigInt64Array == "undefined" ? { name: "BigInt64Array" } : BigInt64Array,
-  Float32Array,
-  Float64Array
-];
-var typedArrayTags = [64, 68, 69, 70, 71, 72, 77, 78, 79, 85, 86];
-for (let i = 0; i < typedArrays.length; i++) {
-  registerTypedArray(typedArrays[i], typedArrayTags[i]);
-}
-function registerTypedArray(TypedArray, tag) {
-  let dvMethod = "get" + TypedArray.name.slice(0, -5);
-  let bytesPerElement;
-  if (typeof TypedArray === "function")
-    bytesPerElement = TypedArray.BYTES_PER_ELEMENT;
-  else
-    TypedArray = null;
-  for (let littleEndian = 0; littleEndian < 2; littleEndian++) {
-    if (!littleEndian && bytesPerElement == 1)
-      continue;
-    let sizeShift = bytesPerElement == 2 ? 1 : bytesPerElement == 4 ? 2 : bytesPerElement == 8 ? 3 : 0;
-    currentExtensions[littleEndian ? tag : tag - 4] = bytesPerElement == 1 || littleEndian == isLittleEndianMachine ? (buffer) => {
-      if (!TypedArray)
-        throw new Error("Could not find typed array for code " + tag);
-      if (!currentDecoder.copyBuffers) {
-        if (bytesPerElement === 1 || bytesPerElement === 2 && !(buffer.byteOffset & 1) || bytesPerElement === 4 && !(buffer.byteOffset & 3) || bytesPerElement === 8 && !(buffer.byteOffset & 7))
-          return new TypedArray(buffer.buffer, buffer.byteOffset, buffer.byteLength >> sizeShift);
-      }
-      return new TypedArray(Uint8Array.prototype.slice.call(buffer, 0).buffer);
-    } : (buffer) => {
-      if (!TypedArray)
-        throw new Error("Could not find typed array for code " + tag);
-      let dv = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-      let elements = buffer.length >> sizeShift;
-      let ta = new TypedArray(elements);
-      let method = dv[dvMethod];
-      for (let i = 0; i < elements; i++) {
-        ta[i] = method.call(dv, i << sizeShift, littleEndian);
-      }
-      return ta;
-    };
-  }
-}
-function readBundleExt() {
-  let length = readJustLength();
-  let bundlePosition = position + read();
-  for (let i = 2; i < length; i++) {
-    let bundleLength = readJustLength();
-    position += bundleLength;
-  }
-  let dataPosition = position;
-  position = bundlePosition;
-  bundledStrings = [readStringJS(readJustLength()), readStringJS(readJustLength())];
-  bundledStrings.position0 = 0;
-  bundledStrings.position1 = 0;
-  bundledStrings.postBundlePosition = position;
-  position = dataPosition;
-  return read();
-}
-function readJustLength() {
-  let token = src[position++] & 31;
-  if (token > 23) {
-    switch (token) {
-      case 24:
-        token = src[position++];
-        break;
-      case 25:
-        token = dataView.getUint16(position);
-        position += 2;
-        break;
-      case 26:
-        token = dataView.getUint32(position);
-        position += 4;
-        break;
-    }
-  }
-  return token;
-}
-function loadShared() {
-  if (currentDecoder.getShared) {
-    let sharedData = saveState(() => {
-      src = null;
-      return currentDecoder.getShared();
-    }) || {};
-    let updatedStructures = sharedData.structures || [];
-    currentDecoder.sharedVersion = sharedData.version;
-    packedValues = currentDecoder.sharedValues = sharedData.packedValues;
-    if (currentStructures === true)
-      currentDecoder.structures = currentStructures = updatedStructures;
-    else
-      currentStructures.splice.apply(currentStructures, [0, updatedStructures.length].concat(updatedStructures));
-  }
-}
-function saveState(callback) {
-  let savedSrcEnd = srcEnd;
-  let savedPosition = position;
-  let savedStringPosition = stringPosition;
-  let savedSrcStringStart = srcStringStart;
-  let savedSrcStringEnd = srcStringEnd;
-  let savedSrcString = srcString;
-  let savedStrings = strings;
-  let savedReferenceMap = referenceMap;
-  let savedBundledStrings = bundledStrings;
-  let savedSrc = new Uint8Array(src.slice(0, srcEnd));
-  let savedStructures = currentStructures;
-  let savedDecoder = currentDecoder;
-  let savedSequentialMode = sequentialMode;
-  let value = callback();
-  srcEnd = savedSrcEnd;
-  position = savedPosition;
-  stringPosition = savedStringPosition;
-  srcStringStart = savedSrcStringStart;
-  srcStringEnd = savedSrcStringEnd;
-  srcString = savedSrcString;
-  strings = savedStrings;
-  referenceMap = savedReferenceMap;
-  bundledStrings = savedBundledStrings;
-  src = savedSrc;
-  sequentialMode = savedSequentialMode;
-  currentStructures = savedStructures;
-  currentDecoder = savedDecoder;
-  dataView = new DataView(src.buffer, src.byteOffset, src.byteLength);
-  return value;
-}
-function clearSource() {
-  src = null;
-  referenceMap = null;
-  currentStructures = null;
-}
-var mult10 = new Array(147);
-for (let i = 0; i < 256; i++) {
-  mult10[i] = +("1e" + Math.floor(45.15 - i * 0.30103));
-}
-var defaultDecoder = new Decoder({ useRecords: false });
-var decode = defaultDecoder.decode;
-var decodeMultiple = defaultDecoder.decodeMultiple;
-var FLOAT32_OPTIONS = {
-  NEVER: 0,
-  ALWAYS: 1,
-  DECIMAL_ROUND: 3,
-  DECIMAL_FIT: 4
-};
-
-// ../wanix-ferrule-stdio/node_modules/cbor-x/encode.js
-var textEncoder;
-try {
-  textEncoder = new TextEncoder();
-} catch (error) {
-}
-var extensions;
-var extensionClasses;
-var Buffer2 = typeof globalThis === "object" && globalThis.Buffer;
-var hasNodeBuffer = typeof Buffer2 !== "undefined";
-var ByteArrayAllocate = hasNodeBuffer ? Buffer2.allocUnsafeSlow : Uint8Array;
-var ByteArray = hasNodeBuffer ? Buffer2 : Uint8Array;
-var MAX_STRUCTURES = 256;
-var MAX_BUFFER_SIZE = hasNodeBuffer ? 4294967296 : 2144337920;
-var throwOnIterable;
-var target;
-var targetView;
-var position2 = 0;
-var safeEnd;
-var bundledStrings2 = null;
-var MAX_BUNDLE_SIZE = 61440;
-var hasNonLatin = /[\u0080-\uFFFF]/;
-var RECORD_SYMBOL = /* @__PURE__ */ Symbol("record-id");
-var Encoder = class extends Decoder {
-  constructor(options) {
-    super(options);
-    this.offset = 0;
-    let typeBuffer;
-    let start;
-    let sharedStructures;
-    let hasSharedUpdate;
-    let structures;
-    let referenceMap3;
-    options = options || {};
-    let encodeUtf8 = ByteArray.prototype.utf8Write ? function(string, position5, maxBytes) {
-      return target.utf8Write(string, position5, maxBytes);
-    } : textEncoder && textEncoder.encodeInto ? function(string, position5) {
-      return textEncoder.encodeInto(string, target.subarray(position5)).written;
-    } : false;
-    let encoder = this;
-    let hasSharedStructures = options.structures || options.saveStructures;
-    let maxSharedStructures = options.maxSharedStructures;
-    if (maxSharedStructures == null)
-      maxSharedStructures = hasSharedStructures ? 128 : 0;
-    if (maxSharedStructures > 8190)
-      throw new Error("Maximum maxSharedStructure is 8190");
-    let isSequential = options.sequential;
-    if (isSequential) {
-      maxSharedStructures = 0;
-    }
-    if (!this.structures)
-      this.structures = [];
-    if (this.saveStructures)
-      this.saveShared = this.saveStructures;
-    let samplingPackedValues, packedObjectMap2, sharedValues = options.sharedValues;
-    let sharedPackedObjectMap2;
-    if (sharedValues) {
-      sharedPackedObjectMap2 = /* @__PURE__ */ Object.create(null);
-      for (let i = 0, l = sharedValues.length; i < l; i++) {
-        sharedPackedObjectMap2[sharedValues[i]] = i;
-      }
-    }
-    let recordIdsToRemove = [];
-    let transitionsCount = 0;
-    let serializationsSinceTransitionRebuild = 0;
-    this.mapEncode = function(value, encodeOptions) {
-      if (this._keyMap && !this._mapped) {
-        switch (value.constructor.name) {
-          case "Array":
-            value = value.map((r) => this.encodeKeys(r));
-            break;
-        }
-      }
-      return this.encode(value, encodeOptions);
-    };
-    this.encode = function(value, encodeOptions) {
-      if (!target) {
-        target = new ByteArrayAllocate(8192);
-        targetView = new DataView(target.buffer, 0, 8192);
-        position2 = 0;
-      }
-      safeEnd = target.length - 10;
-      if (safeEnd - position2 < 2048) {
-        target = new ByteArrayAllocate(target.length);
-        targetView = new DataView(target.buffer, 0, target.length);
-        safeEnd = target.length - 10;
-        position2 = 0;
-      } else if (encodeOptions === REUSE_BUFFER_MODE)
-        position2 = position2 + 7 & 2147483640;
-      start = position2;
-      if (encoder.useSelfDescribedHeader) {
-        targetView.setUint32(position2, 3654940416);
-        position2 += 3;
-      }
-      referenceMap3 = encoder.structuredClone ? /* @__PURE__ */ new Map() : null;
-      if (encoder.bundleStrings && typeof value !== "string") {
-        bundledStrings2 = [];
-        bundledStrings2.size = Infinity;
-      } else
-        bundledStrings2 = null;
-      sharedStructures = encoder.structures;
-      if (sharedStructures) {
-        if (sharedStructures.uninitialized) {
-          let sharedData = encoder.getShared() || {};
-          encoder.structures = sharedStructures = sharedData.structures || [];
-          encoder.sharedVersion = sharedData.version;
-          let sharedValues2 = encoder.sharedValues = sharedData.packedValues;
-          if (sharedValues2) {
-            sharedPackedObjectMap2 = {};
-            for (let i = 0, l = sharedValues2.length; i < l; i++)
-              sharedPackedObjectMap2[sharedValues2[i]] = i;
-          }
-        }
-        let sharedStructuresLength = sharedStructures.length;
-        if (sharedStructuresLength > maxSharedStructures && !isSequential)
-          sharedStructuresLength = maxSharedStructures;
-        if (!sharedStructures.transitions) {
-          sharedStructures.transitions = /* @__PURE__ */ Object.create(null);
-          for (let i = 0; i < sharedStructuresLength; i++) {
-            let keys = sharedStructures[i];
-            if (!keys)
-              continue;
-            let nextTransition, transition = sharedStructures.transitions;
-            for (let j = 0, l = keys.length; j < l; j++) {
-              if (transition[RECORD_SYMBOL] === void 0)
-                transition[RECORD_SYMBOL] = i;
-              let key = keys[j];
-              nextTransition = transition[key];
-              if (!nextTransition) {
-                nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-              }
-              transition = nextTransition;
-            }
-            transition[RECORD_SYMBOL] = i | 1048576;
-          }
-        }
-        if (!isSequential)
-          sharedStructures.nextId = sharedStructuresLength;
-      }
-      if (hasSharedUpdate)
-        hasSharedUpdate = false;
-      structures = sharedStructures || [];
-      packedObjectMap2 = sharedPackedObjectMap2;
-      if (options.pack) {
-        let packedValues3 = /* @__PURE__ */ new Map();
-        packedValues3.values = [];
-        packedValues3.encoder = encoder;
-        packedValues3.maxValues = options.maxPrivatePackedValues || (sharedPackedObjectMap2 ? 16 : Infinity);
-        packedValues3.objectMap = sharedPackedObjectMap2 || false;
-        packedValues3.samplingPackedValues = samplingPackedValues;
-        findRepetitiveStrings(value, packedValues3);
-        if (packedValues3.values.length > 0) {
-          target[position2++] = 216;
-          target[position2++] = 51;
-          writeArrayHeader(4);
-          let valuesArray = packedValues3.values;
-          encode3(valuesArray);
-          writeArrayHeader(0);
-          writeArrayHeader(0);
-          packedObjectMap2 = Object.create(sharedPackedObjectMap2 || null);
-          for (let i = 0, l = valuesArray.length; i < l; i++) {
-            packedObjectMap2[valuesArray[i]] = i;
-          }
-        }
-      }
-      throwOnIterable = encodeOptions & THROW_ON_ITERABLE;
-      try {
-        if (throwOnIterable)
-          return;
-        encode3(value);
-        if (bundledStrings2) {
-          writeBundles(start, encode3);
-        }
-        encoder.offset = position2;
-        if (referenceMap3 && referenceMap3.idsToInsert) {
-          position2 += referenceMap3.idsToInsert.length * 2;
-          if (position2 > safeEnd)
-            makeRoom(position2);
-          encoder.offset = position2;
-          let serialized = insertIds(target.subarray(start, position2), referenceMap3.idsToInsert);
-          referenceMap3 = null;
-          return serialized;
-        }
-        if (encodeOptions & REUSE_BUFFER_MODE) {
-          target.start = start;
-          target.end = position2;
-          return target;
-        }
-        return target.subarray(start, position2);
-      } finally {
-        if (sharedStructures) {
-          if (serializationsSinceTransitionRebuild < 10)
-            serializationsSinceTransitionRebuild++;
-          if (sharedStructures.length > maxSharedStructures)
-            sharedStructures.length = maxSharedStructures;
-          if (transitionsCount > 1e4) {
-            sharedStructures.transitions = null;
-            serializationsSinceTransitionRebuild = 0;
-            transitionsCount = 0;
-            if (recordIdsToRemove.length > 0)
-              recordIdsToRemove = [];
-          } else if (recordIdsToRemove.length > 0 && !isSequential) {
-            for (let i = 0, l = recordIdsToRemove.length; i < l; i++) {
-              recordIdsToRemove[i][RECORD_SYMBOL] = void 0;
-            }
-            recordIdsToRemove = [];
-          }
-        }
-        if (hasSharedUpdate && encoder.saveShared) {
-          if (encoder.structures.length > maxSharedStructures) {
-            encoder.structures = encoder.structures.slice(0, maxSharedStructures);
-          }
-          let returnBuffer = target.subarray(start, position2);
-          if (encoder.updateSharedData() === false)
-            return encoder.encode(value);
-          return returnBuffer;
-        }
-        if (encodeOptions & RESET_BUFFER_MODE)
-          position2 = start;
-      }
-    };
-    this.findCommonStringsToPack = () => {
-      samplingPackedValues = /* @__PURE__ */ new Map();
-      if (!sharedPackedObjectMap2)
-        sharedPackedObjectMap2 = /* @__PURE__ */ Object.create(null);
-      return (options2) => {
-        let threshold = options2 && options2.threshold || 4;
-        let position5 = this.pack ? options2.maxPrivatePackedValues || 16 : 0;
-        if (!sharedValues)
-          sharedValues = this.sharedValues = [];
-        for (let [key, status] of samplingPackedValues) {
-          if (status.count > threshold) {
-            sharedPackedObjectMap2[key] = position5++;
-            sharedValues.push(key);
-            hasSharedUpdate = true;
-          }
-        }
-        while (this.saveShared && this.updateSharedData() === false) {
-        }
-        samplingPackedValues = null;
-      };
-    };
-    const encode3 = (value) => {
-      if (position2 > safeEnd)
-        target = makeRoom(position2);
-      var type = typeof value;
-      var length;
-      if (type === "string") {
-        if (packedObjectMap2) {
-          let packedPosition = packedObjectMap2[value];
-          if (packedPosition >= 0) {
-            if (packedPosition < 16)
-              target[position2++] = packedPosition + 224;
-            else {
-              target[position2++] = 198;
-              if (packedPosition & 1)
-                encode3(15 - packedPosition >> 1);
-              else
-                encode3(packedPosition - 16 >> 1);
-            }
-            return;
-          } else if (samplingPackedValues && !options.pack) {
-            let status = samplingPackedValues.get(value);
-            if (status)
-              status.count++;
-            else
-              samplingPackedValues.set(value, {
-                count: 1
-              });
-          }
-        }
-        let strLength = value.length;
-        if (bundledStrings2 && strLength >= 4 && strLength < 1024) {
-          if ((bundledStrings2.size += strLength) > MAX_BUNDLE_SIZE) {
-            let extStart;
-            let maxBytes2 = (bundledStrings2[0] ? bundledStrings2[0].length * 3 + bundledStrings2[1].length : 0) + 10;
-            if (position2 + maxBytes2 > safeEnd)
-              target = makeRoom(position2 + maxBytes2);
-            target[position2++] = 217;
-            target[position2++] = 223;
-            target[position2++] = 249;
-            target[position2++] = bundledStrings2.position ? 132 : 130;
-            target[position2++] = 26;
-            extStart = position2 - start;
-            position2 += 4;
-            if (bundledStrings2.position) {
-              writeBundles(start, encode3);
-            }
-            bundledStrings2 = ["", ""];
-            bundledStrings2.size = 0;
-            bundledStrings2.position = extStart;
-          }
-          let twoByte = hasNonLatin.test(value);
-          bundledStrings2[twoByte ? 0 : 1] += value;
-          target[position2++] = twoByte ? 206 : 207;
-          encode3(strLength);
-          return;
-        }
-        let headerSize;
-        if (strLength < 32) {
-          headerSize = 1;
-        } else if (strLength < 256) {
-          headerSize = 2;
-        } else if (strLength < 65536) {
-          headerSize = 3;
-        } else {
-          headerSize = 5;
-        }
-        let maxBytes = strLength * 3;
-        if (position2 + maxBytes > safeEnd)
-          target = makeRoom(position2 + maxBytes);
-        if (strLength < 64 || !encodeUtf8) {
-          let i, c1, c2, strPosition = position2 + headerSize;
-          for (i = 0; i < strLength; i++) {
-            c1 = value.charCodeAt(i);
-            if (c1 < 128) {
-              target[strPosition++] = c1;
-            } else if (c1 < 2048) {
-              target[strPosition++] = c1 >> 6 | 192;
-              target[strPosition++] = c1 & 63 | 128;
-            } else if ((c1 & 64512) === 55296 && ((c2 = value.charCodeAt(i + 1)) & 64512) === 56320) {
-              c1 = 65536 + ((c1 & 1023) << 10) + (c2 & 1023);
-              i++;
-              target[strPosition++] = c1 >> 18 | 240;
-              target[strPosition++] = c1 >> 12 & 63 | 128;
-              target[strPosition++] = c1 >> 6 & 63 | 128;
-              target[strPosition++] = c1 & 63 | 128;
-            } else {
-              target[strPosition++] = c1 >> 12 | 224;
-              target[strPosition++] = c1 >> 6 & 63 | 128;
-              target[strPosition++] = c1 & 63 | 128;
-            }
-          }
-          length = strPosition - position2 - headerSize;
-        } else {
-          length = encodeUtf8(value, position2 + headerSize, maxBytes);
-        }
-        if (length < 24) {
-          target[position2++] = 96 | length;
-        } else if (length < 256) {
-          if (headerSize < 2) {
-            target.copyWithin(position2 + 2, position2 + 1, position2 + 1 + length);
-          }
-          target[position2++] = 120;
-          target[position2++] = length;
-        } else if (length < 65536) {
-          if (headerSize < 3) {
-            target.copyWithin(position2 + 3, position2 + 2, position2 + 2 + length);
-          }
-          target[position2++] = 121;
-          target[position2++] = length >> 8;
-          target[position2++] = length & 255;
-        } else {
-          if (headerSize < 5) {
-            target.copyWithin(position2 + 5, position2 + 3, position2 + 3 + length);
-          }
-          target[position2++] = 122;
-          targetView.setUint32(position2, length);
-          position2 += 4;
-        }
-        position2 += length;
-      } else if (type === "number") {
-        if (!this.alwaysUseFloat && value >>> 0 === value) {
-          if (value < 24) {
-            target[position2++] = value;
-          } else if (value < 256) {
-            target[position2++] = 24;
-            target[position2++] = value;
-          } else if (value < 65536) {
-            target[position2++] = 25;
-            target[position2++] = value >> 8;
-            target[position2++] = value & 255;
-          } else {
-            target[position2++] = 26;
-            targetView.setUint32(position2, value);
-            position2 += 4;
-          }
-        } else if (!this.alwaysUseFloat && value >> 0 === value) {
-          if (value >= -24) {
-            target[position2++] = 31 - value;
-          } else if (value >= -256) {
-            target[position2++] = 56;
-            target[position2++] = ~value;
-          } else if (value >= -65536) {
-            target[position2++] = 57;
-            targetView.setUint16(position2, ~value);
-            position2 += 2;
-          } else {
-            target[position2++] = 58;
-            targetView.setUint32(position2, ~value);
-            position2 += 4;
-          }
-        } else {
-          let useFloat32;
-          if ((useFloat32 = this.useFloat32) > 0 && value < 4294967296 && value >= -2147483648) {
-            target[position2++] = 250;
-            targetView.setFloat32(position2, value);
-            let xShifted;
-            if (useFloat32 < 4 || // this checks for rounding of numbers that were encoded in 32-bit float to nearest significant decimal digit that could be preserved
-            (xShifted = value * mult10[(target[position2] & 127) << 1 | target[position2 + 1] >> 7]) >> 0 === xShifted) {
-              position2 += 4;
-              return;
-            } else
-              position2--;
-          }
-          target[position2++] = 251;
-          targetView.setFloat64(position2, value);
-          position2 += 8;
-        }
-      } else if (type === "object") {
-        if (!value)
-          target[position2++] = 246;
-        else {
-          if (referenceMap3) {
-            let referee = referenceMap3.get(value);
-            if (referee) {
-              target[position2++] = 216;
-              target[position2++] = 29;
-              target[position2++] = 25;
-              if (!referee.references) {
-                let idsToInsert = referenceMap3.idsToInsert || (referenceMap3.idsToInsert = []);
-                referee.references = [];
-                idsToInsert.push(referee);
-              }
-              referee.references.push(position2 - start);
-              position2 += 2;
-              return;
-            } else
-              referenceMap3.set(value, { offset: position2 - start });
-          }
-          let constructor = value.constructor;
-          if (constructor === Object) {
-            writeObject(value);
-          } else if (constructor === Array) {
-            length = value.length;
-            if (length < 24) {
-              target[position2++] = 128 | length;
-            } else {
-              writeArrayHeader(length);
-            }
-            for (let i = 0; i < length; i++) {
-              encode3(value[i]);
-            }
-          } else if (constructor === Map) {
-            if (this.mapsAsObjects ? this.useTag259ForMaps !== false : this.useTag259ForMaps) {
-              target[position2++] = 217;
-              target[position2++] = 1;
-              target[position2++] = 3;
-            }
-            length = value.size;
-            if (length < 24) {
-              target[position2++] = 160 | length;
-            } else if (length < 256) {
-              target[position2++] = 184;
-              target[position2++] = length;
-            } else if (length < 65536) {
-              target[position2++] = 185;
-              target[position2++] = length >> 8;
-              target[position2++] = length & 255;
-            } else {
-              target[position2++] = 186;
-              targetView.setUint32(position2, length);
-              position2 += 4;
-            }
-            if (encoder.keyMap) {
-              for (let [key, entryValue] of value) {
-                encode3(encoder.encodeKey(key));
-                encode3(entryValue);
-              }
-            } else {
-              for (let [key, entryValue] of value) {
-                encode3(key);
-                encode3(entryValue);
-              }
-            }
-          } else {
-            for (let i = 0, l = extensions.length; i < l; i++) {
-              let extensionClass = extensionClasses[i];
-              if (value instanceof extensionClass) {
-                let extension = extensions[i];
-                let tag = extension.tag;
-                if (tag == void 0)
-                  tag = extension.getTag && extension.getTag.call(this, value);
-                if (tag < 24) {
-                  target[position2++] = 192 | tag;
-                } else if (tag < 256) {
-                  target[position2++] = 216;
-                  target[position2++] = tag;
-                } else if (tag < 65536) {
-                  target[position2++] = 217;
-                  target[position2++] = tag >> 8;
-                  target[position2++] = tag & 255;
-                } else if (tag > -1) {
-                  target[position2++] = 218;
-                  targetView.setUint32(position2, tag);
-                  position2 += 4;
-                }
-                extension.encode.call(this, value, encode3, makeRoom);
-                return;
-              }
-            }
-            if (value[Symbol.iterator]) {
-              if (throwOnIterable) {
-                let error = new Error("Iterable should be serialized as iterator");
-                error.iteratorNotHandled = true;
-                throw error;
-              }
-              target[position2++] = 159;
-              for (let entry of value) {
-                encode3(entry);
-              }
-              target[position2++] = 255;
-              return;
-            }
-            if (value[Symbol.asyncIterator] || isBlob(value)) {
-              let error = new Error("Iterable/blob should be serialized as iterator");
-              error.iteratorNotHandled = true;
-              throw error;
-            }
-            if (this.useToJSON && value.toJSON) {
-              const json = value.toJSON();
-              if (json !== value)
-                return encode3(json);
-            }
-            writeObject(value);
-          }
-        }
-      } else if (type === "boolean") {
-        target[position2++] = value ? 245 : 244;
-      } else if (type === "bigint") {
-        if (value < BigInt(1) << BigInt(64) && value >= 0) {
-          target[position2++] = 27;
-          targetView.setBigUint64(position2, value);
-        } else if (value > -(BigInt(1) << BigInt(64)) && value < 0) {
-          target[position2++] = 59;
-          targetView.setBigUint64(position2, -value - BigInt(1));
-        } else {
-          if (this.largeBigIntToFloat) {
-            target[position2++] = 251;
-            targetView.setFloat64(position2, Number(value));
-          } else {
-            if (value >= BigInt(0))
-              target[position2++] = 194;
-            else {
-              target[position2++] = 195;
-              value = BigInt(-1) - value;
-            }
-            let bytes = [];
-            while (value) {
-              bytes.push(Number(value & BigInt(255)));
-              value >>= BigInt(8);
-            }
-            writeBuffer(new Uint8Array(bytes.reverse()), makeRoom);
-            return;
-          }
-        }
-        position2 += 8;
-      } else if (type === "undefined") {
-        target[position2++] = 247;
-      } else {
-        throw new Error("Unknown type: " + type);
-      }
-    };
-    const writeObject = this.useRecords === false ? this.variableMapSize ? (object) => {
-      let keys = Object.keys(object);
-      let vals = Object.values(object);
-      let length = keys.length;
-      if (length < 24) {
-        target[position2++] = 160 | length;
-      } else if (length < 256) {
-        target[position2++] = 184;
-        target[position2++] = length;
-      } else if (length < 65536) {
-        target[position2++] = 185;
-        target[position2++] = length >> 8;
-        target[position2++] = length & 255;
-      } else {
-        target[position2++] = 186;
-        targetView.setUint32(position2, length);
-        position2 += 4;
-      }
-      let key;
-      if (encoder.keyMap) {
-        for (let i = 0; i < length; i++) {
-          encode3(encoder.encodeKey(keys[i]));
-          encode3(vals[i]);
-        }
-      } else {
-        for (let i = 0; i < length; i++) {
-          encode3(keys[i]);
-          encode3(vals[i]);
-        }
-      }
-    } : (object) => {
-      target[position2++] = 185;
-      let objectOffset = position2 - start;
-      position2 += 2;
-      let size = 0;
-      if (encoder.keyMap) {
-        for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-          encode3(encoder.encodeKey(key));
-          encode3(object[key]);
-          size++;
-        }
-      } else {
-        for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-          encode3(key);
-          encode3(object[key]);
-          size++;
-        }
-      }
-      target[objectOffset++ + start] = size >> 8;
-      target[objectOffset + start] = size & 255;
-    } : (object, skipValues) => {
-      let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
-      let newTransitions = 0;
-      let length = 0;
-      let parentRecordId;
-      let keys;
-      if (this.keyMap) {
-        keys = Object.keys(object).map((k) => this.encodeKey(k));
-        length = keys.length;
-        for (let i = 0; i < length; i++) {
-          let key = keys[i];
-          nextTransition = transition[key];
-          if (!nextTransition) {
-            nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-            newTransitions++;
-          }
-          transition = nextTransition;
-        }
-      } else {
-        for (let key in object) if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key)) {
-          nextTransition = transition[key];
-          if (!nextTransition) {
-            if (transition[RECORD_SYMBOL] & 1048576) {
-              parentRecordId = transition[RECORD_SYMBOL] & 65535;
-            }
-            nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
-            newTransitions++;
-          }
-          transition = nextTransition;
-          length++;
-        }
-      }
-      let recordId = transition[RECORD_SYMBOL];
-      if (recordId !== void 0) {
-        recordId &= 65535;
-        target[position2++] = 217;
-        target[position2++] = recordId >> 8 | 224;
-        target[position2++] = recordId & 255;
-      } else {
-        if (!keys)
-          keys = transition.__keys__ || (transition.__keys__ = Object.keys(object));
-        if (parentRecordId === void 0) {
-          recordId = structures.nextId++;
-          if (!recordId) {
-            recordId = 0;
-            structures.nextId = 1;
-          }
-          if (recordId >= MAX_STRUCTURES) {
-            structures.nextId = (recordId = maxSharedStructures) + 1;
-          }
-        } else {
-          recordId = parentRecordId;
-        }
-        structures[recordId] = keys;
-        if (recordId < maxSharedStructures) {
-          target[position2++] = 217;
-          target[position2++] = recordId >> 8 | 224;
-          target[position2++] = recordId & 255;
-          transition = structures.transitions;
-          for (let i = 0; i < length; i++) {
-            if (transition[RECORD_SYMBOL] === void 0 || transition[RECORD_SYMBOL] & 1048576)
-              transition[RECORD_SYMBOL] = recordId;
-            transition = transition[keys[i]];
-          }
-          transition[RECORD_SYMBOL] = recordId | 1048576;
-          hasSharedUpdate = true;
-        } else {
-          transition[RECORD_SYMBOL] = recordId;
-          targetView.setUint32(position2, 3655335680);
-          position2 += 3;
-          if (newTransitions)
-            transitionsCount += serializationsSinceTransitionRebuild * newTransitions;
-          if (recordIdsToRemove.length >= MAX_STRUCTURES - maxSharedStructures)
-            recordIdsToRemove.shift()[RECORD_SYMBOL] = void 0;
-          recordIdsToRemove.push(transition);
-          writeArrayHeader(length + 2);
-          encode3(57344 + recordId);
-          encode3(keys);
-          if (skipValues) return;
-          for (let key in object)
-            if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key))
-              encode3(object[key]);
-          return;
-        }
-      }
-      if (length < 24) {
-        target[position2++] = 128 | length;
-      } else {
-        writeArrayHeader(length);
-      }
-      if (skipValues) return;
-      for (let key in object)
-        if (typeof object.hasOwnProperty !== "function" || object.hasOwnProperty(key))
-          encode3(object[key]);
-    };
-    const makeRoom = (end) => {
-      let newSize;
-      if (end > 16777216) {
-        if (end - start > MAX_BUFFER_SIZE)
-          throw new Error("Encoded buffer would be larger than maximum buffer size");
-        newSize = Math.min(
-          MAX_BUFFER_SIZE,
-          Math.round(Math.max((end - start) * (end > 67108864 ? 1.25 : 2), 4194304) / 4096) * 4096
-        );
-      } else
-        newSize = (Math.max(end - start << 2, target.length - 1) >> 12) + 1 << 12;
-      let newBuffer = new ByteArrayAllocate(newSize);
-      targetView = new DataView(newBuffer.buffer, 0, newSize);
-      if (target.copy)
-        target.copy(newBuffer, 0, start, end);
-      else
-        newBuffer.set(target.slice(start, end));
-      position2 -= start;
-      start = 0;
-      safeEnd = newBuffer.length - 10;
-      return target = newBuffer;
-    };
-    let chunkThreshold = 100;
-    let continuedChunkThreshold = 1e3;
-    this.encodeAsIterable = function(value, options2) {
-      return startEncoding(value, options2, encodeObjectAsIterable);
-    };
-    this.encodeAsAsyncIterable = function(value, options2) {
-      return startEncoding(value, options2, encodeObjectAsAsyncIterable);
-    };
-    function* encodeObjectAsIterable(object, iterateProperties, finalIterable) {
-      let constructor = object.constructor;
-      if (constructor === Object) {
-        let useRecords = encoder.useRecords !== false;
-        if (useRecords)
-          writeObject(object, true);
-        else
-          writeEntityLength(Object.keys(object).length, 160);
-        for (let key in object) {
-          let value = object[key];
-          if (!useRecords) encode3(key);
-          if (value && typeof value === "object") {
-            if (iterateProperties[key])
-              yield* encodeObjectAsIterable(value, iterateProperties[key]);
-            else
-              yield* tryEncode(value, iterateProperties, key);
-          } else encode3(value);
-        }
-      } else if (constructor === Array) {
-        let length = object.length;
-        writeArrayHeader(length);
-        for (let i = 0; i < length; i++) {
-          let value = object[i];
-          if (value && (typeof value === "object" || position2 - start > chunkThreshold)) {
-            if (iterateProperties.element)
-              yield* encodeObjectAsIterable(value, iterateProperties.element);
-            else
-              yield* tryEncode(value, iterateProperties, "element");
-          } else encode3(value);
-        }
-      } else if (object[Symbol.iterator] && !object.buffer) {
-        target[position2++] = 159;
-        for (let value of object) {
-          if (value && (typeof value === "object" || position2 - start > chunkThreshold)) {
-            if (iterateProperties.element)
-              yield* encodeObjectAsIterable(value, iterateProperties.element);
-            else
-              yield* tryEncode(value, iterateProperties, "element");
-          } else encode3(value);
-        }
-        target[position2++] = 255;
-      } else if (isBlob(object)) {
-        writeEntityLength(object.size, 64);
-        yield target.subarray(start, position2);
-        yield object;
-        restartEncoding();
-      } else if (object[Symbol.asyncIterator]) {
-        target[position2++] = 159;
-        yield target.subarray(start, position2);
-        yield object;
-        restartEncoding();
-        target[position2++] = 255;
-      } else {
-        encode3(object);
-      }
-      if (finalIterable && position2 > start) yield target.subarray(start, position2);
-      else if (position2 - start > chunkThreshold) {
-        yield target.subarray(start, position2);
-        restartEncoding();
-      }
-    }
-    function* tryEncode(value, iterateProperties, key) {
-      let restart = position2 - start;
-      try {
-        encode3(value);
-        if (position2 - start > chunkThreshold) {
-          yield target.subarray(start, position2);
-          restartEncoding();
-        }
-      } catch (error) {
-        if (error.iteratorNotHandled) {
-          iterateProperties[key] = {};
-          position2 = start + restart;
-          yield* encodeObjectAsIterable.call(this, value, iterateProperties[key]);
-        } else throw error;
-      }
-    }
-    function restartEncoding() {
-      chunkThreshold = continuedChunkThreshold;
-      encoder.encode(null, THROW_ON_ITERABLE);
-    }
-    function startEncoding(value, options2, encodeIterable) {
-      if (options2 && options2.chunkThreshold)
-        chunkThreshold = continuedChunkThreshold = options2.chunkThreshold;
-      else
-        chunkThreshold = 100;
-      if (value && typeof value === "object") {
-        encoder.encode(null, THROW_ON_ITERABLE);
-        return encodeIterable(value, encoder.iterateProperties || (encoder.iterateProperties = {}), true);
-      }
-      return [encoder.encode(value)];
-    }
-    async function* encodeObjectAsAsyncIterable(value, iterateProperties) {
-      for (let encodedValue of encodeObjectAsIterable(value, iterateProperties, true)) {
-        let constructor = encodedValue.constructor;
-        if (constructor === ByteArray || constructor === Uint8Array)
-          yield encodedValue;
-        else if (isBlob(encodedValue)) {
-          let reader = encodedValue.stream().getReader();
-          let next;
-          while (!(next = await reader.read()).done) {
-            yield next.value;
-          }
-        } else if (encodedValue[Symbol.asyncIterator]) {
-          for await (let asyncValue of encodedValue) {
-            restartEncoding();
-            if (asyncValue)
-              yield* encodeObjectAsAsyncIterable(asyncValue, iterateProperties.async || (iterateProperties.async = {}));
-            else yield encoder.encode(asyncValue);
-          }
-        } else {
-          yield encodedValue;
-        }
-      }
-    }
-  }
-  useBuffer(buffer) {
-    target = buffer;
-    targetView = new DataView(target.buffer, target.byteOffset, target.byteLength);
-    position2 = 0;
-  }
-  clearSharedData() {
-    if (this.structures)
-      this.structures = [];
-    if (this.sharedValues)
-      this.sharedValues = void 0;
-  }
-  updateSharedData() {
-    let lastVersion = this.sharedVersion || 0;
-    this.sharedVersion = lastVersion + 1;
-    let structuresCopy = this.structures.slice(0);
-    let sharedData = new SharedData(structuresCopy, this.sharedValues, this.sharedVersion);
-    let saveResults = this.saveShared(
-      sharedData,
-      (existingShared) => (existingShared && existingShared.version || 0) == lastVersion
-    );
-    if (saveResults === false) {
-      sharedData = this.getShared() || {};
-      this.structures = sharedData.structures || [];
-      this.sharedValues = sharedData.packedValues;
-      this.sharedVersion = sharedData.version;
-      this.structures.nextId = this.structures.length;
-    } else {
-      structuresCopy.forEach((structure, i) => this.structures[i] = structure);
-    }
-    return saveResults;
-  }
-};
-function writeEntityLength(length, majorValue) {
-  if (length < 24)
-    target[position2++] = majorValue | length;
-  else if (length < 256) {
-    target[position2++] = majorValue | 24;
-    target[position2++] = length;
-  } else if (length < 65536) {
-    target[position2++] = majorValue | 25;
-    target[position2++] = length >> 8;
-    target[position2++] = length & 255;
-  } else {
-    target[position2++] = majorValue | 26;
-    targetView.setUint32(position2, length);
-    position2 += 4;
-  }
-}
-var SharedData = class {
-  constructor(structures, values, version) {
-    this.structures = structures;
-    this.packedValues = values;
-    this.version = version;
-  }
-};
-function writeArrayHeader(length) {
-  if (length < 24)
-    target[position2++] = 128 | length;
-  else if (length < 256) {
-    target[position2++] = 152;
-    target[position2++] = length;
-  } else if (length < 65536) {
-    target[position2++] = 153;
-    target[position2++] = length >> 8;
-    target[position2++] = length & 255;
-  } else {
-    target[position2++] = 154;
-    targetView.setUint32(position2, length);
-    position2 += 4;
-  }
-}
-var BlobConstructor = typeof Blob === "undefined" ? function() {
-} : Blob;
-function isBlob(object) {
-  if (object instanceof BlobConstructor)
-    return true;
-  let tag = object[Symbol.toStringTag];
-  return tag === "Blob" || tag === "File";
-}
-function findRepetitiveStrings(value, packedValues3) {
-  switch (typeof value) {
-    case "string":
-      if (value.length > 3) {
-        if (packedValues3.objectMap[value] > -1 || packedValues3.values.length >= packedValues3.maxValues)
-          return;
-        let packedStatus = packedValues3.get(value);
-        if (packedStatus) {
-          if (++packedStatus.count == 2) {
-            packedValues3.values.push(value);
-          }
-        } else {
-          packedValues3.set(value, {
-            count: 1
-          });
-          if (packedValues3.samplingPackedValues) {
-            let status = packedValues3.samplingPackedValues.get(value);
-            if (status)
-              status.count++;
-            else
-              packedValues3.samplingPackedValues.set(value, {
-                count: 1
-              });
-          }
-        }
-      }
-      break;
-    case "object":
-      if (value) {
-        if (value instanceof Array) {
-          for (let i = 0, l = value.length; i < l; i++) {
-            findRepetitiveStrings(value[i], packedValues3);
-          }
-        } else {
-          let includeKeys = !packedValues3.encoder.useRecords;
-          for (var key in value) {
-            if (value.hasOwnProperty(key)) {
-              if (includeKeys)
-                findRepetitiveStrings(key, packedValues3);
-              findRepetitiveStrings(value[key], packedValues3);
-            }
-          }
-        }
-      }
-      break;
-    case "function":
-      console.log(value);
-  }
-}
-var isLittleEndianMachine2 = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
-extensionClasses = [
-  Date,
-  Set,
-  Error,
-  RegExp,
-  Tag,
-  ArrayBuffer,
-  Uint8Array,
-  Uint8ClampedArray,
-  Uint16Array,
-  Uint32Array,
-  typeof BigUint64Array == "undefined" ? function() {
-  } : BigUint64Array,
-  Int8Array,
-  Int16Array,
-  Int32Array,
-  typeof BigInt64Array == "undefined" ? function() {
-  } : BigInt64Array,
-  Float32Array,
-  Float64Array,
-  SharedData
-];
-extensions = [
-  {
-    // Date
-    tag: 1,
-    encode(date, encode3) {
-      let seconds = date.getTime() / 1e3;
-      if ((this.useTimestamp32 || date.getMilliseconds() === 0) && seconds >= 0 && seconds < 4294967296) {
-        target[position2++] = 26;
-        targetView.setUint32(position2, seconds);
-        position2 += 4;
-      } else {
-        target[position2++] = 251;
-        targetView.setFloat64(position2, seconds);
-        position2 += 8;
-      }
-    }
-  },
-  {
-    // Set
-    tag: 258,
-    // https://github.com/input-output-hk/cbor-sets-spec/blob/master/CBOR_SETS.md
-    encode(set, encode3) {
-      let array = Array.from(set);
-      encode3(array);
-    }
-  },
-  {
-    // Error
-    tag: 27,
-    // http://cbor.schmorp.de/generic-object
-    encode(error, encode3) {
-      encode3([error.name, error.message]);
-    }
-  },
-  {
-    // RegExp
-    tag: 27,
-    // http://cbor.schmorp.de/generic-object
-    encode(regex, encode3) {
-      encode3(["RegExp", regex.source, regex.flags]);
-    }
-  },
-  {
-    // Tag
-    getTag(tag) {
-      return tag.tag;
-    },
-    encode(tag, encode3) {
-      encode3(tag.value);
-    }
-  },
-  {
-    // ArrayBuffer
-    encode(arrayBuffer, encode3, makeRoom) {
-      writeBuffer(arrayBuffer, makeRoom);
-    }
-  },
-  {
-    // Uint8Array
-    getTag(typedArray) {
-      if (typedArray.constructor === Uint8Array) {
-        if (this.tagUint8Array || hasNodeBuffer && this.tagUint8Array !== false)
-          return 64;
-      }
-    },
-    encode(typedArray, encode3, makeRoom) {
-      writeBuffer(typedArray, makeRoom);
-    }
-  },
-  typedArrayEncoder(68, 1),
-  typedArrayEncoder(69, 2),
-  typedArrayEncoder(70, 4),
-  typedArrayEncoder(71, 8),
-  typedArrayEncoder(72, 1),
-  typedArrayEncoder(77, 2),
-  typedArrayEncoder(78, 4),
-  typedArrayEncoder(79, 8),
-  typedArrayEncoder(85, 4),
-  typedArrayEncoder(86, 8),
-  {
-    encode(sharedData, encode3) {
-      let packedValues3 = sharedData.packedValues || [];
-      let sharedStructures = sharedData.structures || [];
-      if (packedValues3.values.length > 0) {
-        target[position2++] = 216;
-        target[position2++] = 51;
-        writeArrayHeader(4);
-        let valuesArray = packedValues3.values;
-        encode3(valuesArray);
-        writeArrayHeader(0);
-        writeArrayHeader(0);
-        packedObjectMap = Object.create(sharedPackedObjectMap || null);
-        for (let i = 0, l = valuesArray.length; i < l; i++) {
-          packedObjectMap[valuesArray[i]] = i;
-        }
-      }
-      if (sharedStructures) {
-        targetView.setUint32(position2, 3655335424);
-        position2 += 3;
-        let definitions = sharedStructures.slice(0);
-        definitions.unshift(57344);
-        definitions.push(new Tag(sharedData.version, 1399353956));
-        encode3(definitions);
-      } else
-        encode3(new Tag(sharedData.version, 1399353956));
-    }
-  }
-];
-function typedArrayEncoder(tag, size) {
-  if (!isLittleEndianMachine2 && size > 1)
-    tag -= 4;
-  return {
-    tag,
-    encode: function writeExtBuffer(typedArray, encode3) {
-      let length = typedArray.byteLength;
-      let offset = typedArray.byteOffset || 0;
-      let buffer = typedArray.buffer || typedArray;
-      encode3(hasNodeBuffer ? Buffer2.from(buffer, offset, length) : new Uint8Array(buffer, offset, length));
-    }
-  };
-}
-function writeBuffer(buffer, makeRoom) {
-  let length = buffer.byteLength;
-  if (length < 24) {
-    target[position2++] = 64 + length;
-  } else if (length < 256) {
-    target[position2++] = 88;
-    target[position2++] = length;
-  } else if (length < 65536) {
-    target[position2++] = 89;
-    target[position2++] = length >> 8;
-    target[position2++] = length & 255;
-  } else {
-    target[position2++] = 90;
-    targetView.setUint32(position2, length);
-    position2 += 4;
-  }
-  if (position2 + length >= target.length) {
-    makeRoom(position2 + length);
-  }
-  target.set(buffer.buffer ? buffer : new Uint8Array(buffer), position2);
-  position2 += length;
-}
-function insertIds(serialized, idsToInsert) {
-  let nextId;
-  let distanceToMove = idsToInsert.length * 2;
-  let lastEnd = serialized.length - distanceToMove;
-  idsToInsert.sort((a, b) => a.offset > b.offset ? 1 : -1);
-  for (let id = 0; id < idsToInsert.length; id++) {
-    let referee = idsToInsert[id];
-    referee.id = id;
-    for (let position5 of referee.references) {
-      serialized[position5++] = id >> 8;
-      serialized[position5] = id & 255;
-    }
-  }
-  while (nextId = idsToInsert.pop()) {
-    let offset = nextId.offset;
-    serialized.copyWithin(offset + distanceToMove, offset, lastEnd);
-    distanceToMove -= 2;
-    let position5 = offset + distanceToMove;
-    serialized[position5++] = 216;
-    serialized[position5++] = 28;
-    lastEnd = offset;
-  }
-  return serialized;
-}
-function writeBundles(start, encode3) {
-  targetView.setUint32(bundledStrings2.position + start, position2 - bundledStrings2.position - start + 1);
-  let writeStrings = bundledStrings2;
-  bundledStrings2 = null;
-  encode3(writeStrings[0]);
-  encode3(writeStrings[1]);
-}
-var defaultEncoder = new Encoder({ useRecords: false });
-var encode = defaultEncoder.encode;
-var encodeAsIterable = defaultEncoder.encodeAsIterable;
-var encodeAsAsyncIterable = defaultEncoder.encodeAsAsyncIterable;
-var { NEVER, ALWAYS, DECIMAL_ROUND, DECIMAL_FIT } = FLOAT32_OPTIONS;
-var REUSE_BUFFER_MODE = 512;
-var RESET_BUFFER_MODE = 1024;
-var THROW_ON_ITERABLE = 2048;
-
 // wasi/callbuffer.ts
+var import_index_no_eval = __toESM(require_index_no_eval(), 1);
 var CallBuffer = class {
   buffer;
   ctrl;
@@ -2299,7 +2410,7 @@ var CallBuffer = class {
     this.maxData = this.buffer.byteLength - 8 - 16;
   }
   respond(value) {
-    const buf = encode(value);
+    const buf = (0, import_index_no_eval.encode)(value);
     if (buf.length > this.data.length) {
       throw new Error(`response (${buf.length} bytes) exceeds CallBuffer (${this.data.length} bytes)`);
     }
@@ -2313,7 +2424,7 @@ var CallBuffer = class {
     params["method"] = method;
     postMessage(params);
     Atomics.wait(this.ctrl, 0, 0);
-    const value = decode(this.data.slice(0, this.len[0]));
+    const value = (0, import_index_no_eval.decode)(this.data.slice(0, this.len[0]));
     if (value && value.__wanix_error) {
       throw new Error(value.__wanix_error);
     }
@@ -2321,7 +2432,7 @@ var CallBuffer = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
+// node_modules/@bjorn3/browser_wasi_shim/dist/wasi_defs.js
 var wasi_defs_exports = {};
 __export(wasi_defs_exports, {
   ADVICE_DONTNEED: () => ADVICE_DONTNEED,
@@ -2840,7 +2951,7 @@ var Prestat = class _Prestat {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
+// node_modules/@bjorn3/browser_wasi_shim/dist/debug.js
 var Debug = class Debug2 {
   enable(enabled) {
     this.log = createLogger(enabled === void 0 ? true : enabled, this.prefix);
@@ -2865,7 +2976,7 @@ function createLogger(enabled, prefix) {
 }
 var debug = new Debug(false);
 
-// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
+// node_modules/@bjorn3/browser_wasi_shim/dist/wasi.js
 var WASIProcExit = class extends Error {
   constructor(code) {
     super("exit with exit code " + code);
@@ -2900,25 +3011,25 @@ var WASI = class WASI2 {
     this.args = args;
     this.env = env;
     this.fds = fds;
-    const self = this;
+    const self2 = this;
     this.wasiImport = { args_sizes_get(argc, argv_buf_size) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      buffer.setUint32(argc, self.args.length, true);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      buffer.setUint32(argc, self2.args.length, true);
       let buf_size = 0;
-      for (const arg of self.args) {
+      for (const arg of self2.args) {
         buf_size += arg.length + 1;
       }
       buffer.setUint32(argv_buf_size, buf_size, true);
       debug.log(buffer.getUint32(argc, true), buffer.getUint32(argv_buf_size, true));
       return 0;
     }, args_get(argv, argv_buf) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
       const orig_argv_buf = argv_buf;
-      for (let i = 0; i < self.args.length; i++) {
+      for (let i = 0; i < self2.args.length; i++) {
         buffer.setUint32(argv, argv_buf, true);
         argv += 4;
-        const arg = new TextEncoder().encode(self.args[i]);
+        const arg = new TextEncoder().encode(self2.args[i]);
         buffer8.set(arg, argv_buf);
         buffer.setUint8(argv_buf + arg.length, 0);
         argv_buf += arg.length + 1;
@@ -2928,23 +3039,23 @@ var WASI = class WASI2 {
       }
       return 0;
     }, environ_sizes_get(environ_count, environ_size) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      buffer.setUint32(environ_count, self.env.length, true);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      buffer.setUint32(environ_count, self2.env.length, true);
       let buf_size = 0;
-      for (const environ of self.env) {
+      for (const environ of self2.env) {
         buf_size += new TextEncoder().encode(environ).length + 1;
       }
       buffer.setUint32(environ_size, buf_size, true);
       debug.log(buffer.getUint32(environ_count, true), buffer.getUint32(environ_size, true));
       return 0;
     }, environ_get(environ, environ_buf) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
       const orig_environ_buf = environ_buf;
-      for (let i = 0; i < self.env.length; i++) {
+      for (let i = 0; i < self2.env.length; i++) {
         buffer.setUint32(environ, environ_buf, true);
         environ += 4;
-        const e = new TextEncoder().encode(self.env[i]);
+        const e = new TextEncoder().encode(self2.env[i]);
         buffer8.set(e, environ_buf);
         buffer.setUint8(environ_buf + e.length, 0);
         environ_buf += e.length + 1;
@@ -2967,11 +3078,11 @@ var WASI = class WASI2 {
         default:
           return ERRNO_NOSYS;
       }
-      const view = new DataView(self.inst.exports.memory.buffer);
+      const view = new DataView(self2.inst.exports.memory.buffer);
       view.setBigUint64(res_ptr, resolutionValue, true);
       return ERRNO_SUCCESS;
     }, clock_time_get(id, precision, time) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
       if (id === CLOCKID_REALTIME) {
         buffer.setBigUint64(time, BigInt((/* @__PURE__ */ new Date()).getTime()) * 1000000n, true);
       } else if (id == CLOCKID_MONOTONIC) {
@@ -2987,83 +3098,83 @@ var WASI = class WASI2 {
       }
       return 0;
     }, fd_advise(fd, offset, len, advice) {
-      if (self.fds[fd] != void 0) {
+      if (self2.fds[fd] != void 0) {
         return ERRNO_SUCCESS;
       } else {
         return ERRNO_BADF;
       }
     }, fd_allocate(fd, offset, len) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_allocate(offset, len);
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_allocate(offset, len);
       } else {
         return ERRNO_BADF;
       }
     }, fd_close(fd) {
-      if (self.fds[fd] != void 0) {
-        const ret = self.fds[fd].fd_close();
-        self.fds[fd] = void 0;
+      if (self2.fds[fd] != void 0) {
+        const ret = self2.fds[fd].fd_close();
+        self2.fds[fd] = void 0;
         return ret;
       } else {
         return ERRNO_BADF;
       }
     }, fd_datasync(fd) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_sync();
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_sync();
       } else {
         return ERRNO_BADF;
       }
     }, fd_fdstat_get(fd, fdstat_ptr) {
-      if (self.fds[fd] != void 0) {
-        const { ret, fdstat } = self.fds[fd].fd_fdstat_get();
+      if (self2.fds[fd] != void 0) {
+        const { ret, fdstat } = self2.fds[fd].fd_fdstat_get();
         if (fdstat != null) {
-          fdstat.write_bytes(new DataView(self.inst.exports.memory.buffer), fdstat_ptr);
+          fdstat.write_bytes(new DataView(self2.inst.exports.memory.buffer), fdstat_ptr);
         }
         return ret;
       } else {
         return ERRNO_BADF;
       }
     }, fd_fdstat_set_flags(fd, flags) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_fdstat_set_flags(flags);
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_fdstat_set_flags(flags);
       } else {
         return ERRNO_BADF;
       }
     }, fd_fdstat_set_rights(fd, fs_rights_base, fs_rights_inheriting) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_fdstat_set_rights(fs_rights_base, fs_rights_inheriting);
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_fdstat_set_rights(fs_rights_base, fs_rights_inheriting);
       } else {
         return ERRNO_BADF;
       }
     }, fd_filestat_get(fd, filestat_ptr) {
-      if (self.fds[fd] != void 0) {
-        const { ret, filestat } = self.fds[fd].fd_filestat_get();
+      if (self2.fds[fd] != void 0) {
+        const { ret, filestat } = self2.fds[fd].fd_filestat_get();
         if (filestat != null) {
-          filestat.write_bytes(new DataView(self.inst.exports.memory.buffer), filestat_ptr);
+          filestat.write_bytes(new DataView(self2.inst.exports.memory.buffer), filestat_ptr);
         }
         return ret;
       } else {
         return ERRNO_BADF;
       }
     }, fd_filestat_set_size(fd, size) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_filestat_set_size(size);
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_filestat_set_size(size);
       } else {
         return ERRNO_BADF;
       }
     }, fd_filestat_set_times(fd, atim, mtim, fst_flags) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_filestat_set_times(atim, mtim, fst_flags);
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_filestat_set_times(atim, mtim, fst_flags);
       } else {
         return ERRNO_BADF;
       }
     }, fd_pread(fd, iovs_ptr, iovs_len, offset, nread_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const iovecs = Iovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
         let nread = 0;
         for (const iovec of iovecs) {
-          const { ret, data } = self.fds[fd].fd_pread(iovec.buf_len, offset);
+          const { ret, data } = self2.fds[fd].fd_pread(iovec.buf_len, offset);
           if (ret != ERRNO_SUCCESS) {
             buffer.setUint32(nread_ptr, nread, true);
             return ret;
@@ -3081,9 +3192,9 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, fd_prestat_get(fd, buf_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
-        const { ret, prestat } = self.fds[fd].fd_prestat_get();
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
+        const { ret, prestat } = self2.fds[fd].fd_prestat_get();
         if (prestat != null) {
           prestat.write_bytes(buffer, buf_ptr);
         }
@@ -3092,27 +3203,27 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, fd_prestat_dir_name(fd, path_ptr, path_len) {
-      if (self.fds[fd] != void 0) {
-        const { ret, prestat } = self.fds[fd].fd_prestat_get();
+      if (self2.fds[fd] != void 0) {
+        const { ret, prestat } = self2.fds[fd].fd_prestat_get();
         if (prestat == null) {
           return ret;
         }
         const prestat_dir_name = prestat.inner.pr_name;
-        const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
+        const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
         buffer8.set(prestat_dir_name.slice(0, path_len), path_ptr);
         return prestat_dir_name.byteLength > path_len ? ERRNO_NAMETOOLONG : ERRNO_SUCCESS;
       } else {
         return ERRNO_BADF;
       }
     }, fd_pwrite(fd, iovs_ptr, iovs_len, offset, nwritten_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const iovecs = Ciovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
         let nwritten = 0;
         for (const iovec of iovecs) {
           const data = buffer8.slice(iovec.buf, iovec.buf + iovec.buf_len);
-          const { ret, nwritten: nwritten_part } = self.fds[fd].fd_pwrite(data, offset);
+          const { ret, nwritten: nwritten_part } = self2.fds[fd].fd_pwrite(data, offset);
           if (ret != ERRNO_SUCCESS) {
             buffer.setUint32(nwritten_ptr, nwritten, true);
             return ret;
@@ -3129,13 +3240,13 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, fd_read(fd, iovs_ptr, iovs_len, nread_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const iovecs = Iovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
         let nread = 0;
         for (const iovec of iovecs) {
-          const { ret, data } = self.fds[fd].fd_read(iovec.buf_len);
+          const { ret, data } = self2.fds[fd].fd_read(iovec.buf_len);
           if (ret != ERRNO_SUCCESS) {
             buffer.setUint32(nread_ptr, nread, true);
             return ret;
@@ -3152,12 +3263,12 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, fd_readdir(fd, buf, buf_len, cookie, bufused_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         let bufused = 0;
         while (true) {
-          const { ret, dirent } = self.fds[fd].fd_readdir_single(cookie);
+          const { ret, dirent } = self2.fds[fd].fd_readdir_single(cookie);
           if (ret != 0) {
             buffer.setUint32(bufused_ptr, bufused, true);
             return ret;
@@ -3189,50 +3300,50 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, fd_renumber(fd, to) {
-      if (self.fds[fd] != void 0 && self.fds[to] != void 0) {
-        const ret = self.fds[to].fd_close();
+      if (self2.fds[fd] != void 0 && self2.fds[to] != void 0) {
+        const ret = self2.fds[to].fd_close();
         if (ret != 0) {
           return ret;
         }
-        self.fds[to] = self.fds[fd];
-        self.fds[fd] = void 0;
+        self2.fds[to] = self2.fds[fd];
+        self2.fds[fd] = void 0;
         return 0;
       } else {
         return ERRNO_BADF;
       }
     }, fd_seek(fd, offset, whence, offset_out_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
-        const { ret, offset: offset_out } = self.fds[fd].fd_seek(offset, whence);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
+        const { ret, offset: offset_out } = self2.fds[fd].fd_seek(offset, whence);
         buffer.setBigInt64(offset_out_ptr, offset_out, true);
         return ret;
       } else {
         return ERRNO_BADF;
       }
     }, fd_sync(fd) {
-      if (self.fds[fd] != void 0) {
-        return self.fds[fd].fd_sync();
+      if (self2.fds[fd] != void 0) {
+        return self2.fds[fd].fd_sync();
       } else {
         return ERRNO_BADF;
       }
     }, fd_tell(fd, offset_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
-        const { ret, offset } = self.fds[fd].fd_tell();
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
+        const { ret, offset } = self2.fds[fd].fd_tell();
         buffer.setBigUint64(offset_ptr, offset, true);
         return ret;
       } else {
         return ERRNO_BADF;
       }
     }, fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const iovecs = Ciovec.read_bytes_array(buffer, iovs_ptr, iovs_len);
         let nwritten = 0;
         for (const iovec of iovecs) {
           const data = buffer8.slice(iovec.buf, iovec.buf + iovec.buf_len);
-          const { ret, nwritten: nwritten_part } = self.fds[fd].fd_write(data);
+          const { ret, nwritten: nwritten_part } = self2.fds[fd].fd_write(data);
           if (ret != ERRNO_SUCCESS) {
             buffer.setUint32(nwritten_ptr, nwritten, true);
             return ret;
@@ -3248,19 +3359,19 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, path_create_directory(fd, path_ptr, path_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
-        return self.fds[fd].path_create_directory(path);
+        return self2.fds[fd].path_create_directory(path);
       } else {
         return ERRNO_BADF;
       }
     }, path_filestat_get(fd, flags, path_ptr, path_len, filestat_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
-        const { ret, filestat } = self.fds[fd].path_filestat_get(flags, path);
+        const { ret, filestat } = self2.fds[fd].path_filestat_get(flags, path);
         if (filestat != null) {
           filestat.write_bytes(buffer, filestat_ptr);
         }
@@ -3269,50 +3380,50 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, path_filestat_set_times(fd, flags, path_ptr, path_len, atim, mtim, fst_flags) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
-        return self.fds[fd].path_filestat_set_times(flags, path, atim, mtim, fst_flags);
+        return self2.fds[fd].path_filestat_set_times(flags, path, atim, mtim, fst_flags);
       } else {
         return ERRNO_BADF;
       }
     }, path_link(old_fd, old_flags, old_path_ptr, old_path_len, new_fd, new_path_ptr, new_path_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[old_fd] != void 0 && self.fds[new_fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[old_fd] != void 0 && self2.fds[new_fd] != void 0) {
         const old_path = new TextDecoder("utf-8").decode(buffer8.slice(old_path_ptr, old_path_ptr + old_path_len));
         const new_path = new TextDecoder("utf-8").decode(buffer8.slice(new_path_ptr, new_path_ptr + new_path_len));
-        const { ret, inode_obj } = self.fds[old_fd].path_lookup(old_path, old_flags);
+        const { ret, inode_obj } = self2.fds[old_fd].path_lookup(old_path, old_flags);
         if (inode_obj == null) {
           return ret;
         }
-        return self.fds[new_fd].path_link(new_path, inode_obj, false);
+        return self2.fds[new_fd].path_link(new_path, inode_obj, false);
       } else {
         return ERRNO_BADF;
       }
     }, path_open(fd, dirflags, path_ptr, path_len, oflags, fs_rights_base, fs_rights_inheriting, fd_flags, opened_fd_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
         debug.log(path);
-        const { ret, fd_obj } = self.fds[fd].path_open(dirflags, path, oflags, fs_rights_base, fs_rights_inheriting, fd_flags);
+        const { ret, fd_obj } = self2.fds[fd].path_open(dirflags, path, oflags, fs_rights_base, fs_rights_inheriting, fd_flags);
         if (ret != 0) {
           return ret;
         }
-        self.fds.push(fd_obj);
-        const opened_fd = self.fds.length - 1;
+        self2.fds.push(fd_obj);
+        const opened_fd = self2.fds.length - 1;
         buffer.setUint32(opened_fd_ptr, opened_fd, true);
         return 0;
       } else {
         return ERRNO_BADF;
       }
     }, path_readlink(fd, path_ptr, path_len, buf_ptr, buf_len, nread_ptr) {
-      const buffer = new DataView(self.inst.exports.memory.buffer);
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
         debug.log(path);
-        const { ret, data } = self.fds[fd].path_readlink(path);
+        const { ret, data } = self2.fds[fd].path_readlink(path);
         if (data != null) {
           const data_buf = new TextEncoder().encode(data);
           if (data_buf.length > buf_len) {
@@ -3327,25 +3438,25 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, path_remove_directory(fd, path_ptr, path_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
-        return self.fds[fd].path_remove_directory(path);
+        return self2.fds[fd].path_remove_directory(path);
       } else {
         return ERRNO_BADF;
       }
     }, path_rename(fd, old_path_ptr, old_path_len, new_fd, new_path_ptr, new_path_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0 && self.fds[new_fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0 && self2.fds[new_fd] != void 0) {
         const old_path = new TextDecoder("utf-8").decode(buffer8.slice(old_path_ptr, old_path_ptr + old_path_len));
         const new_path = new TextDecoder("utf-8").decode(buffer8.slice(new_path_ptr, new_path_ptr + new_path_len));
-        let { ret, inode_obj } = self.fds[fd].path_unlink(old_path);
+        let { ret, inode_obj } = self2.fds[fd].path_unlink(old_path);
         if (inode_obj == null) {
           return ret;
         }
-        ret = self.fds[new_fd].path_link(new_path, inode_obj, true);
+        ret = self2.fds[new_fd].path_link(new_path, inode_obj, true);
         if (ret != ERRNO_SUCCESS) {
-          if (self.fds[fd].path_link(old_path, inode_obj, true) != ERRNO_SUCCESS) {
+          if (self2.fds[fd].path_link(old_path, inode_obj, true) != ERRNO_SUCCESS) {
             throw "path_link should always return success when relinking an inode back to the original place";
           }
         }
@@ -3354,8 +3465,8 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, path_symlink(old_path_ptr, old_path_len, fd, new_path_ptr, new_path_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const old_path = new TextDecoder("utf-8").decode(buffer8.slice(old_path_ptr, old_path_ptr + old_path_len));
         const new_path = new TextDecoder("utf-8").decode(buffer8.slice(new_path_ptr, new_path_ptr + new_path_len));
         return ERRNO_NOTSUP;
@@ -3363,10 +3474,10 @@ var WASI = class WASI2 {
         return ERRNO_BADF;
       }
     }, path_unlink_file(fd, path_ptr, path_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer);
-      if (self.fds[fd] != void 0) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer);
+      if (self2.fds[fd] != void 0) {
         const path = new TextDecoder("utf-8").decode(buffer8.slice(path_ptr, path_ptr + path_len));
-        return self.fds[fd].path_unlink_file(path);
+        return self2.fds[fd].path_unlink_file(path);
       } else {
         return ERRNO_BADF;
       }
@@ -3378,7 +3489,7 @@ var WASI = class WASI2 {
         debug.log("poll_oneoff: only a single subscription is supported");
         return ERRNO_NOTSUP;
       }
-      const buffer = new DataView(self.inst.exports.memory.buffer);
+      const buffer = new DataView(self2.inst.exports.memory.buffer);
       const s = Subscription.read_bytes(buffer, in_ptr);
       const eventtype = s.eventtype;
       const clockid = s.clockid;
@@ -3407,8 +3518,8 @@ var WASI = class WASI2 {
       throw "raised signal " + sig;
     }, sched_yield() {
     }, random_get(buf, buf_len) {
-      const buffer8 = new Uint8Array(self.inst.exports.memory.buffer).subarray(buf, buf + buf_len);
-      if ("crypto" in globalThis && (typeof SharedArrayBuffer === "undefined" || !(self.inst.exports.memory.buffer instanceof SharedArrayBuffer))) {
+      const buffer8 = new Uint8Array(self2.inst.exports.memory.buffer).subarray(buf, buf + buf_len);
+      if ("crypto" in globalThis && (typeof SharedArrayBuffer === "undefined" || !(self2.inst.exports.memory.buffer instanceof SharedArrayBuffer))) {
         for (let i = 0; i < buf_len; i += 65536) {
           crypto.getRandomValues(buffer8.subarray(i, i + 65536));
         }
@@ -3429,7 +3540,7 @@ var WASI = class WASI2 {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
+// node_modules/@bjorn3/browser_wasi_shim/dist/fd.js
 var Fd = class {
   fd_allocate(offset, len) {
     return ERRNO_NOTSUP;
@@ -3529,7 +3640,7 @@ var Inode = class _Inode {
 };
 Inode.next_ino = 1n;
 
-// ../wanix-ferrule-stdio/node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
+// node_modules/@bjorn3/browser_wasi_shim/dist/fs_mem.js
 var OpenFile = class extends Fd {
   fd_allocate(offset, len) {
     if (this.file.size > offset + len) {
@@ -4052,8 +4163,8 @@ var Path = class _Path {
   parts = [];
   is_dir = false;
   static from(path) {
-    const self = new _Path();
-    self.is_dir = path.endsWith("/");
+    const self2 = new _Path();
+    self2.is_dir = path.endsWith("/");
     if (path.startsWith("/")) {
       return { ret: wasi_defs_exports.ERRNO_NOTCAPABLE, path: null };
     }
@@ -4065,14 +4176,14 @@ var Path = class _Path {
         continue;
       }
       if (component === "..") {
-        if (self.parts.pop() == void 0) {
+        if (self2.parts.pop() == void 0) {
           return { ret: wasi_defs_exports.ERRNO_NOTCAPABLE, path: null };
         }
         continue;
       }
-      self.parts.push(component);
+      self2.parts.push(component);
     }
-    return { ret: wasi_defs_exports.ERRNO_SUCCESS, path: self };
+    return { ret: wasi_defs_exports.ERRNO_SUCCESS, path: self2 };
   }
   to_path_string() {
     let s = this.parts.join("/");
@@ -4276,15 +4387,15 @@ var FileHandle = class extends WanixHandle {
     if (data === null) {
       return 0;
     }
-    let writeBuffer3;
+    let writeBuffer2;
     if (buffer instanceof ArrayBuffer) {
-      writeBuffer3 = new Uint8Array(buffer);
+      writeBuffer2 = new Uint8Array(buffer);
     } else if (buffer instanceof Uint8Array) {
-      writeBuffer3 = buffer;
+      writeBuffer2 = buffer;
     } else {
       throw new Error("Buffer must be ArrayBuffer or Uint8Array");
     }
-    writeBuffer3.set(data, 0);
+    writeBuffer2.set(data, 0);
     return data.length;
   }
   write(buffer, options) {
@@ -4364,20 +4475,20 @@ var OpenEmptyFile = class extends OpenFile {
 };
 
 // wasi/poll-oneoff.ts
-function applyPatchPollOneoff(self) {
-  self.wasiImport.poll_oneoff = ((inPtr, outPtr, nsubscriptions, sizeOutPtr) => {
+function applyPatchPollOneoff(self2) {
+  self2.wasiImport.poll_oneoff = ((inPtr, outPtr, nsubscriptions, sizeOutPtr) => {
     if (nsubscriptions < 0) {
       return wasi_defs_exports.ERRNO_INVAL;
     }
     const size_subscription = 48;
     const subscriptions = new DataView(
-      self.inst.exports.memory.buffer,
+      self2.inst.exports.memory.buffer,
       inPtr,
       nsubscriptions * size_subscription
     );
     const size_event = 32;
     const events = new DataView(
-      self.inst.exports.memory.buffer,
+      self2.inst.exports.memory.buffer,
       outPtr,
       nsubscriptions * size_event
     );
@@ -4387,7 +4498,7 @@ function applyPatchPollOneoff(self) {
           i * size_subscription + subscription_u_offset + subscription_u_tag_size,
           true
         );
-        const openFile = self.fds[fd];
+        const openFile = self2.fds[fd];
         if (!(openFile instanceof OpenFile2)) {
           throw new Error(`FD#${fd} cannot be polled!`);
         }
@@ -4455,7 +4566,7 @@ function applyPatchPollOneoff(self) {
     }
     const size_size = 4;
     const outNSize = new DataView(
-      self.inst.exports.memory.buffer,
+      self2.inst.exports.memory.buffer,
       sizeOutPtr,
       size_size
     );
@@ -4464,7 +4575,7 @@ function applyPatchPollOneoff(self) {
   });
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/json.js
+// node_modules/@progrium/duplex/esm/codec/json.js
 (function() {
   if (typeof global !== "undefined" && !global.TextEncoder) {
     const { TextEncoder: TextEncoder2, TextDecoder: TextDecoder2 } = __require("util");
@@ -4473,42 +4584,42 @@ function applyPatchPollOneoff(self) {
   }
 })();
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js
-var decoder2;
+// node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/decode.js
+var decoder;
 try {
-  decoder2 = new TextDecoder();
+  decoder = new TextDecoder();
 } catch (error) {
 }
-var src2;
-var srcEnd2;
-var position3 = 0;
-var EMPTY_ARRAY2 = [];
-var LEGACY_RECORD_INLINE_ID2 = 105;
-var RECORD_DEFINITIONS_ID2 = 57342;
-var RECORD_INLINE_ID2 = 57343;
-var BUNDLED_STRINGS_ID2 = 57337;
-var PACKED_REFERENCE_TAG_ID2 = 6;
-var STOP_CODE2 = {};
-var strings2 = EMPTY_ARRAY2;
-var stringPosition2 = 0;
-var currentDecoder2 = {};
-var currentStructures2;
-var srcString2;
-var srcStringStart2 = 0;
-var srcStringEnd2 = 0;
-var bundledStrings3;
-var referenceMap2;
-var currentExtensions2 = [];
-var currentExtensionRanges2 = [];
-var packedValues2;
-var dataView2;
-var restoreMapsAsObject2;
-var defaultOptions2 = {
+var src;
+var srcEnd;
+var position = 0;
+var EMPTY_ARRAY = [];
+var LEGACY_RECORD_INLINE_ID = 105;
+var RECORD_DEFINITIONS_ID = 57342;
+var RECORD_INLINE_ID = 57343;
+var BUNDLED_STRINGS_ID = 57337;
+var PACKED_REFERENCE_TAG_ID = 6;
+var STOP_CODE = {};
+var strings = EMPTY_ARRAY;
+var stringPosition = 0;
+var currentDecoder = {};
+var currentStructures;
+var srcString;
+var srcStringStart = 0;
+var srcStringEnd = 0;
+var bundledStrings;
+var referenceMap;
+var currentExtensions = [];
+var currentExtensionRanges = [];
+var packedValues;
+var dataView;
+var restoreMapsAsObject;
+var defaultOptions = {
   useRecords: false,
   mapsAsObjects: true
 };
-var sequentialMode2 = false;
-var Decoder2 = class _Decoder {
+var sequentialMode = false;
+var Decoder = class _Decoder {
   constructor(options) {
     if (options) {
       if ((options.keyMap || options._keyMap) && !options.useRecords) {
@@ -4559,7 +4670,7 @@ var Decoder2 = class _Decoder {
         this._mapKey.set(v, k);
     }
     let res = {};
-    map.forEach((v, k) => res[safeKey2(this._mapKey.has(k) ? this._mapKey.get(k) : k)] = v);
+    map.forEach((v, k) => res[safeKey(this._mapKey.has(k) ? this._mapKey.get(k) : k)] = v);
     return res;
   }
   mapDecode(source, end) {
@@ -4573,66 +4684,66 @@ var Decoder2 = class _Decoder {
     return res;
   }
   decode(source, end) {
-    if (src2) {
-      return saveState2(() => {
-        clearSource2();
-        return this ? this.decode(source, end) : _Decoder.prototype.decode.call(defaultOptions2, source, end);
+    if (src) {
+      return saveState(() => {
+        clearSource();
+        return this ? this.decode(source, end) : _Decoder.prototype.decode.call(defaultOptions, source, end);
       });
     }
-    srcEnd2 = end > -1 ? end : source.length;
-    position3 = 0;
-    stringPosition2 = 0;
-    srcStringEnd2 = 0;
-    srcString2 = null;
-    strings2 = EMPTY_ARRAY2;
-    bundledStrings3 = null;
-    src2 = source;
+    srcEnd = end > -1 ? end : source.length;
+    position = 0;
+    stringPosition = 0;
+    srcStringEnd = 0;
+    srcString = null;
+    strings = EMPTY_ARRAY;
+    bundledStrings = null;
+    src = source;
     try {
-      dataView2 = source.dataView || (source.dataView = new DataView(source.buffer, source.byteOffset, source.byteLength));
+      dataView = source.dataView || (source.dataView = new DataView(source.buffer, source.byteOffset, source.byteLength));
     } catch (error) {
-      src2 = null;
+      src = null;
       if (source instanceof Uint8Array)
         throw error;
       throw new Error("Source must be a Uint8Array or Buffer but was a " + (source && typeof source == "object" ? source.constructor.name : typeof source));
     }
     if (this instanceof _Decoder) {
-      currentDecoder2 = this;
-      packedValues2 = this.sharedValues && (this.pack ? new Array(this.maxPrivatePackedValues || 16).concat(this.sharedValues) : this.sharedValues);
+      currentDecoder = this;
+      packedValues = this.sharedValues && (this.pack ? new Array(this.maxPrivatePackedValues || 16).concat(this.sharedValues) : this.sharedValues);
       if (this.structures) {
-        currentStructures2 = this.structures;
-        return checkedRead2();
-      } else if (!currentStructures2 || currentStructures2.length > 0) {
-        currentStructures2 = [];
+        currentStructures = this.structures;
+        return checkedRead();
+      } else if (!currentStructures || currentStructures.length > 0) {
+        currentStructures = [];
       }
     } else {
-      currentDecoder2 = defaultOptions2;
-      if (!currentStructures2 || currentStructures2.length > 0)
-        currentStructures2 = [];
-      packedValues2 = null;
+      currentDecoder = defaultOptions;
+      if (!currentStructures || currentStructures.length > 0)
+        currentStructures = [];
+      packedValues = null;
     }
-    return checkedRead2();
+    return checkedRead();
   }
   decodeMultiple(source, forEach) {
     let values, lastPosition = 0;
     try {
       let size = source.length;
-      sequentialMode2 = true;
-      let value = this ? this.decode(source, size) : defaultDecoder2.decode(source, size);
+      sequentialMode = true;
+      let value = this ? this.decode(source, size) : defaultDecoder.decode(source, size);
       if (forEach) {
         if (forEach(value) === false) {
           return;
         }
-        while (position3 < size) {
-          lastPosition = position3;
-          if (forEach(checkedRead2()) === false) {
+        while (position < size) {
+          lastPosition = position;
+          if (forEach(checkedRead()) === false) {
             return;
           }
         }
       } else {
         values = [value];
-        while (position3 < size) {
-          lastPosition = position3;
-          values.push(checkedRead2());
+        while (position < size) {
+          lastPosition = position;
+          values.push(checkedRead());
         }
         return values;
       }
@@ -4641,90 +4752,90 @@ var Decoder2 = class _Decoder {
       error.values = values;
       throw error;
     } finally {
-      sequentialMode2 = false;
-      clearSource2();
+      sequentialMode = false;
+      clearSource();
     }
   }
 };
-function checkedRead2() {
+function checkedRead() {
   try {
-    let result = read2();
-    if (bundledStrings3) {
-      if (position3 >= bundledStrings3.postBundlePosition) {
+    let result = read();
+    if (bundledStrings) {
+      if (position >= bundledStrings.postBundlePosition) {
         let error = new Error("Unexpected bundle position");
         error.incomplete = true;
         throw error;
       }
-      position3 = bundledStrings3.postBundlePosition;
-      bundledStrings3 = null;
+      position = bundledStrings.postBundlePosition;
+      bundledStrings = null;
     }
-    if (position3 == srcEnd2) {
-      currentStructures2 = null;
-      src2 = null;
-      if (referenceMap2)
-        referenceMap2 = null;
-    } else if (position3 > srcEnd2) {
+    if (position == srcEnd) {
+      currentStructures = null;
+      src = null;
+      if (referenceMap)
+        referenceMap = null;
+    } else if (position > srcEnd) {
       let error = new Error("Unexpected end of CBOR data");
       error.incomplete = true;
       throw error;
-    } else if (!sequentialMode2) {
+    } else if (!sequentialMode) {
       throw new Error("Data read, but end of buffer not reached");
     }
     return result;
   } catch (error) {
-    clearSource2();
+    clearSource();
     if (error instanceof RangeError || error.message.startsWith("Unexpected end of buffer")) {
       error.incomplete = true;
     }
     throw error;
   }
 }
-function read2() {
-  let token = src2[position3++];
+function read() {
+  let token = src[position++];
   let majorType = token >> 5;
   token = token & 31;
   if (token > 23) {
     switch (token) {
       case 24:
-        token = src2[position3++];
+        token = src[position++];
         break;
       case 25:
         if (majorType == 7) {
-          return getFloat162();
+          return getFloat16();
         }
-        token = dataView2.getUint16(position3);
-        position3 += 2;
+        token = dataView.getUint16(position);
+        position += 2;
         break;
       case 26:
         if (majorType == 7) {
-          let value = dataView2.getFloat32(position3);
-          if (currentDecoder2.useFloat32 > 2) {
-            let multiplier = mult102[(src2[position3] & 127) << 1 | src2[position3 + 1] >> 7];
-            position3 += 4;
+          let value = dataView.getFloat32(position);
+          if (currentDecoder.useFloat32 > 2) {
+            let multiplier = mult10[(src[position] & 127) << 1 | src[position + 1] >> 7];
+            position += 4;
             return (multiplier * value + (value > 0 ? 0.5 : -0.5) >> 0) / multiplier;
           }
-          position3 += 4;
+          position += 4;
           return value;
         }
-        token = dataView2.getUint32(position3);
-        position3 += 4;
+        token = dataView.getUint32(position);
+        position += 4;
         break;
       case 27:
         if (majorType == 7) {
-          let value = dataView2.getFloat64(position3);
-          position3 += 8;
+          let value = dataView.getFloat64(position);
+          position += 8;
           return value;
         }
         if (majorType > 1) {
-          if (dataView2.getUint32(position3) > 0)
+          if (dataView.getUint32(position) > 0)
             throw new Error("JavaScript does not support arrays, maps, or strings with length over 4294967295");
-          token = dataView2.getUint32(position3 + 4);
-        } else if (currentDecoder2.int64AsNumber) {
-          token = dataView2.getUint32(position3) * 4294967296;
-          token += dataView2.getUint32(position3 + 4);
+          token = dataView.getUint32(position + 4);
+        } else if (currentDecoder.int64AsNumber) {
+          token = dataView.getUint32(position) * 4294967296;
+          token += dataView.getUint32(position + 4);
         } else
-          token = dataView2.getBigUint64(position3);
-        position3 += 8;
+          token = dataView.getBigUint64(position);
+        position += 8;
         break;
       case 31:
         switch (majorType) {
@@ -4735,37 +4846,37 @@ function read2() {
           case 4:
             let array = [];
             let value, i = 0;
-            while ((value = read2()) != STOP_CODE2) {
+            while ((value = read()) != STOP_CODE) {
               array[i++] = value;
             }
             return majorType == 4 ? array : majorType == 3 ? array.join("") : Buffer.concat(array);
           case 5:
             let key;
-            if (currentDecoder2.mapsAsObjects) {
+            if (currentDecoder.mapsAsObjects) {
               let object = {};
-              if (currentDecoder2.keyMap)
-                while ((key = read2()) != STOP_CODE2)
-                  object[safeKey2(currentDecoder2.decodeKey(key))] = read2();
+              if (currentDecoder.keyMap)
+                while ((key = read()) != STOP_CODE)
+                  object[safeKey(currentDecoder.decodeKey(key))] = read();
               else
-                while ((key = read2()) != STOP_CODE2)
-                  object[safeKey2(key)] = read2();
+                while ((key = read()) != STOP_CODE)
+                  object[safeKey(key)] = read();
               return object;
             } else {
-              if (restoreMapsAsObject2) {
-                currentDecoder2.mapsAsObjects = true;
-                restoreMapsAsObject2 = false;
+              if (restoreMapsAsObject) {
+                currentDecoder.mapsAsObjects = true;
+                restoreMapsAsObject = false;
               }
               let map = /* @__PURE__ */ new Map();
-              if (currentDecoder2.keyMap)
-                while ((key = read2()) != STOP_CODE2)
-                  map.set(currentDecoder2.decodeKey(key), read2());
+              if (currentDecoder.keyMap)
+                while ((key = read()) != STOP_CODE)
+                  map.set(currentDecoder.decodeKey(key), read());
               else
-                while ((key = read2()) != STOP_CODE2)
-                  map.set(key, read2());
+                while ((key = read()) != STOP_CODE)
+                  map.set(key, read());
               return map;
             }
           case 7:
-            return STOP_CODE2;
+            return STOP_CODE;
           default:
             throw new Error("Invalid major type for indefinite length " + majorType);
         }
@@ -4779,107 +4890,107 @@ function read2() {
     case 1:
       return ~token;
     case 2:
-      return readBin2(token);
+      return readBin(token);
     case 3:
-      if (srcStringEnd2 >= position3) {
-        return srcString2.slice(position3 - srcStringStart2, (position3 += token) - srcStringStart2);
+      if (srcStringEnd >= position) {
+        return srcString.slice(position - srcStringStart, (position += token) - srcStringStart);
       }
-      if (srcStringEnd2 == 0 && srcEnd2 < 140 && token < 32) {
-        let string = token < 16 ? shortStringInJS2(token) : longStringInJS2(token);
+      if (srcStringEnd == 0 && srcEnd < 140 && token < 32) {
+        let string = token < 16 ? shortStringInJS(token) : longStringInJS(token);
         if (string != null)
           return string;
       }
-      return readFixedString2(token);
+      return readFixedString(token);
     case 4:
       let array = new Array(token);
       for (let i = 0; i < token; i++)
-        array[i] = read2();
+        array[i] = read();
       return array;
     case 5:
-      if (currentDecoder2.mapsAsObjects) {
+      if (currentDecoder.mapsAsObjects) {
         let object = {};
-        if (currentDecoder2.keyMap)
+        if (currentDecoder.keyMap)
           for (let i = 0; i < token; i++)
-            object[safeKey2(currentDecoder2.decodeKey(read2()))] = read2();
+            object[safeKey(currentDecoder.decodeKey(read()))] = read();
         else
           for (let i = 0; i < token; i++)
-            object[safeKey2(read2())] = read2();
+            object[safeKey(read())] = read();
         return object;
       } else {
-        if (restoreMapsAsObject2) {
-          currentDecoder2.mapsAsObjects = true;
-          restoreMapsAsObject2 = false;
+        if (restoreMapsAsObject) {
+          currentDecoder.mapsAsObjects = true;
+          restoreMapsAsObject = false;
         }
         let map = /* @__PURE__ */ new Map();
-        if (currentDecoder2.keyMap)
+        if (currentDecoder.keyMap)
           for (let i = 0; i < token; i++)
-            map.set(currentDecoder2.decodeKey(read2()), read2());
+            map.set(currentDecoder.decodeKey(read()), read());
         else
           for (let i = 0; i < token; i++)
-            map.set(read2(), read2());
+            map.set(read(), read());
         return map;
       }
     case 6:
-      if (token >= BUNDLED_STRINGS_ID2) {
-        let structure = currentStructures2[token & 8191];
+      if (token >= BUNDLED_STRINGS_ID) {
+        let structure = currentStructures[token & 8191];
         if (structure) {
           if (!structure.read)
-            structure.read = createStructureReader2(structure);
+            structure.read = createStructureReader(structure);
           return structure.read();
         }
         if (token < 65536) {
-          if (token == RECORD_INLINE_ID2) {
-            let length = readJustLength2();
-            let id = read2();
-            let structure2 = read2();
-            recordDefinition2(id, structure2);
+          if (token == RECORD_INLINE_ID) {
+            let length = readJustLength();
+            let id = read();
+            let structure2 = read();
+            recordDefinition(id, structure2);
             let object = {};
-            if (currentDecoder2.keyMap)
+            if (currentDecoder.keyMap)
               for (let i = 2; i < length; i++) {
-                let key = currentDecoder2.decodeKey(structure2[i - 2]);
-                object[safeKey2(key)] = read2();
+                let key = currentDecoder.decodeKey(structure2[i - 2]);
+                object[safeKey(key)] = read();
               }
             else
               for (let i = 2; i < length; i++) {
                 let key = structure2[i - 2];
-                object[safeKey2(key)] = read2();
+                object[safeKey(key)] = read();
               }
             return object;
-          } else if (token == RECORD_DEFINITIONS_ID2) {
-            let length = readJustLength2();
-            let id = read2();
+          } else if (token == RECORD_DEFINITIONS_ID) {
+            let length = readJustLength();
+            let id = read();
             for (let i = 2; i < length; i++) {
-              recordDefinition2(id++, read2());
+              recordDefinition(id++, read());
             }
-            return read2();
-          } else if (token == BUNDLED_STRINGS_ID2) {
-            return readBundleExt2();
+            return read();
+          } else if (token == BUNDLED_STRINGS_ID) {
+            return readBundleExt();
           }
-          if (currentDecoder2.getShared) {
-            loadShared2();
-            structure = currentStructures2[token & 8191];
+          if (currentDecoder.getShared) {
+            loadShared();
+            structure = currentStructures[token & 8191];
             if (structure) {
               if (!structure.read)
-                structure.read = createStructureReader2(structure);
+                structure.read = createStructureReader(structure);
               return structure.read();
             }
           }
         }
       }
-      let extension = currentExtensions2[token];
+      let extension = currentExtensions[token];
       if (extension) {
         if (extension.handlesRead)
-          return extension(read2);
+          return extension(read);
         else
-          return extension(read2());
+          return extension(read());
       } else {
-        let input = read2();
-        for (let i = 0; i < currentExtensionRanges2.length; i++) {
-          let value = currentExtensionRanges2[i](token, input);
+        let input = read();
+        for (let i = 0; i < currentExtensionRanges.length; i++) {
+          let value = currentExtensionRanges[i](token, input);
           if (value !== void 0)
             return value;
         }
-        return new Tag2(input, token);
+        return new Tag(input, token);
       }
     case 7:
       switch (token) {
@@ -4894,7 +5005,7 @@ function read2() {
         // undefined
         case 31:
         default:
-          let packedValue = (packedValues2 || getPackedValues2())[token];
+          let packedValue = (packedValues || getPackedValues())[token];
           if (packedValue !== void 0)
             return packedValue;
           throw new Error("Unknown token " + token);
@@ -4908,76 +5019,76 @@ function read2() {
       throw new Error("Unknown CBOR token " + token);
   }
 }
-function createStructureReader2(structure) {
+function createStructureReader(structure) {
   function readObject() {
-    let length = src2[position3++];
+    let length = src[position++];
     length = length & 31;
     if (length > 23) {
       switch (length) {
         case 24:
-          length = src2[position3++];
+          length = src[position++];
           break;
         case 25:
-          length = dataView2.getUint16(position3);
-          position3 += 2;
+          length = dataView.getUint16(position);
+          position += 2;
           break;
         case 26:
-          length = dataView2.getUint32(position3);
-          position3 += 4;
+          length = dataView.getUint32(position);
+          position += 4;
           break;
         default:
-          throw new Error("Expected array header, but got " + src2[position3 - 1]);
+          throw new Error("Expected array header, but got " + src[position - 1]);
       }
     }
     let compiledReader = this.compiledReader;
     while (compiledReader) {
       if (compiledReader.propertyCount === length)
-        return compiledReader(read2);
+        return compiledReader(read);
       compiledReader = compiledReader.next;
     }
     let object = {};
-    if (currentDecoder2.keyMap)
+    if (currentDecoder.keyMap)
       for (let i = 0; i < length; i++)
-        object[safeKey2(currentDecoder2.decodeKey(this[i]))] = read2();
+        object[safeKey(currentDecoder.decodeKey(this[i]))] = read();
     else
       for (let i = 0; i < length; i++) {
-        object[safeKey2(this[i])] = read2();
+        object[safeKey(this[i])] = read();
       }
     return object;
   }
   structure.slowReads = 0;
   return readObject;
 }
-function safeKey2(key) {
+function safeKey(key) {
   return key === "__proto__" ? "__proto_" : key;
 }
-var readFixedString2 = readStringJS2;
-function readStringJS2(length) {
+var readFixedString = readStringJS;
+function readStringJS(length) {
   let result;
   if (length < 16) {
-    if (result = shortStringInJS2(length))
+    if (result = shortStringInJS(length))
       return result;
   }
-  if (length > 64 && decoder2)
-    return decoder2.decode(src2.subarray(position3, position3 += length));
-  const end = position3 + length;
+  if (length > 64 && decoder)
+    return decoder.decode(src.subarray(position, position += length));
+  const end = position + length;
   const units = [];
   result = "";
-  while (position3 < end) {
-    const byte1 = src2[position3++];
+  while (position < end) {
+    const byte1 = src[position++];
     if ((byte1 & 128) === 0) {
       units.push(byte1);
     } else if ((byte1 & 224) === 192) {
-      const byte2 = src2[position3++] & 63;
+      const byte2 = src[position++] & 63;
       units.push((byte1 & 31) << 6 | byte2);
     } else if ((byte1 & 240) === 224) {
-      const byte2 = src2[position3++] & 63;
-      const byte3 = src2[position3++] & 63;
+      const byte2 = src[position++] & 63;
+      const byte3 = src[position++] & 63;
       units.push((byte1 & 31) << 12 | byte2 << 6 | byte3);
     } else if ((byte1 & 248) === 240) {
-      const byte2 = src2[position3++] & 63;
-      const byte3 = src2[position3++] & 63;
-      const byte4 = src2[position3++] & 63;
+      const byte2 = src[position++] & 63;
+      const byte3 = src[position++] & 63;
+      const byte4 = src[position++] & 63;
       let unit = (byte1 & 7) << 18 | byte2 << 12 | byte3 << 6 | byte4;
       if (unit > 65535) {
         unit -= 65536;
@@ -4989,179 +5100,179 @@ function readStringJS2(length) {
       units.push(byte1);
     }
     if (units.length >= 4096) {
-      result += fromCharCode2.apply(String, units);
+      result += fromCharCode.apply(String, units);
       units.length = 0;
     }
   }
   if (units.length > 0) {
-    result += fromCharCode2.apply(String, units);
+    result += fromCharCode.apply(String, units);
   }
   return result;
 }
-var fromCharCode2 = String.fromCharCode;
-function longStringInJS2(length) {
-  let start = position3;
+var fromCharCode = String.fromCharCode;
+function longStringInJS(length) {
+  let start = position;
   let bytes = new Array(length);
   for (let i = 0; i < length; i++) {
-    const byte = src2[position3++];
+    const byte = src[position++];
     if ((byte & 128) > 0) {
-      position3 = start;
+      position = start;
       return;
     }
     bytes[i] = byte;
   }
-  return fromCharCode2.apply(String, bytes);
+  return fromCharCode.apply(String, bytes);
 }
-function shortStringInJS2(length) {
+function shortStringInJS(length) {
   if (length < 4) {
     if (length < 2) {
       if (length === 0)
         return "";
       else {
-        let a = src2[position3++];
+        let a = src[position++];
         if ((a & 128) > 1) {
-          position3 -= 1;
+          position -= 1;
           return;
         }
-        return fromCharCode2(a);
+        return fromCharCode(a);
       }
     } else {
-      let a = src2[position3++];
-      let b = src2[position3++];
+      let a = src[position++];
+      let b = src[position++];
       if ((a & 128) > 0 || (b & 128) > 0) {
-        position3 -= 2;
+        position -= 2;
         return;
       }
       if (length < 3)
-        return fromCharCode2(a, b);
-      let c = src2[position3++];
+        return fromCharCode(a, b);
+      let c = src[position++];
       if ((c & 128) > 0) {
-        position3 -= 3;
+        position -= 3;
         return;
       }
-      return fromCharCode2(a, b, c);
+      return fromCharCode(a, b, c);
     }
   } else {
-    let a = src2[position3++];
-    let b = src2[position3++];
-    let c = src2[position3++];
-    let d = src2[position3++];
+    let a = src[position++];
+    let b = src[position++];
+    let c = src[position++];
+    let d = src[position++];
     if ((a & 128) > 0 || (b & 128) > 0 || (c & 128) > 0 || (d & 128) > 0) {
-      position3 -= 4;
+      position -= 4;
       return;
     }
     if (length < 6) {
       if (length === 4)
-        return fromCharCode2(a, b, c, d);
+        return fromCharCode(a, b, c, d);
       else {
-        let e = src2[position3++];
+        let e = src[position++];
         if ((e & 128) > 0) {
-          position3 -= 5;
+          position -= 5;
           return;
         }
-        return fromCharCode2(a, b, c, d, e);
+        return fromCharCode(a, b, c, d, e);
       }
     } else if (length < 8) {
-      let e = src2[position3++];
-      let f = src2[position3++];
+      let e = src[position++];
+      let f = src[position++];
       if ((e & 128) > 0 || (f & 128) > 0) {
-        position3 -= 6;
+        position -= 6;
         return;
       }
       if (length < 7)
-        return fromCharCode2(a, b, c, d, e, f);
-      let g = src2[position3++];
+        return fromCharCode(a, b, c, d, e, f);
+      let g = src[position++];
       if ((g & 128) > 0) {
-        position3 -= 7;
+        position -= 7;
         return;
       }
-      return fromCharCode2(a, b, c, d, e, f, g);
+      return fromCharCode(a, b, c, d, e, f, g);
     } else {
-      let e = src2[position3++];
-      let f = src2[position3++];
-      let g = src2[position3++];
-      let h = src2[position3++];
+      let e = src[position++];
+      let f = src[position++];
+      let g = src[position++];
+      let h = src[position++];
       if ((e & 128) > 0 || (f & 128) > 0 || (g & 128) > 0 || (h & 128) > 0) {
-        position3 -= 8;
+        position -= 8;
         return;
       }
       if (length < 10) {
         if (length === 8)
-          return fromCharCode2(a, b, c, d, e, f, g, h);
+          return fromCharCode(a, b, c, d, e, f, g, h);
         else {
-          let i = src2[position3++];
+          let i = src[position++];
           if ((i & 128) > 0) {
-            position3 -= 9;
+            position -= 9;
             return;
           }
-          return fromCharCode2(a, b, c, d, e, f, g, h, i);
+          return fromCharCode(a, b, c, d, e, f, g, h, i);
         }
       } else if (length < 12) {
-        let i = src2[position3++];
-        let j = src2[position3++];
+        let i = src[position++];
+        let j = src[position++];
         if ((i & 128) > 0 || (j & 128) > 0) {
-          position3 -= 10;
+          position -= 10;
           return;
         }
         if (length < 11)
-          return fromCharCode2(a, b, c, d, e, f, g, h, i, j);
-        let k = src2[position3++];
+          return fromCharCode(a, b, c, d, e, f, g, h, i, j);
+        let k = src[position++];
         if ((k & 128) > 0) {
-          position3 -= 11;
+          position -= 11;
           return;
         }
-        return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k);
+        return fromCharCode(a, b, c, d, e, f, g, h, i, j, k);
       } else {
-        let i = src2[position3++];
-        let j = src2[position3++];
-        let k = src2[position3++];
-        let l = src2[position3++];
+        let i = src[position++];
+        let j = src[position++];
+        let k = src[position++];
+        let l = src[position++];
         if ((i & 128) > 0 || (j & 128) > 0 || (k & 128) > 0 || (l & 128) > 0) {
-          position3 -= 12;
+          position -= 12;
           return;
         }
         if (length < 14) {
           if (length === 12)
-            return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l);
+            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l);
           else {
-            let m = src2[position3++];
+            let m = src[position++];
             if ((m & 128) > 0) {
-              position3 -= 13;
+              position -= 13;
               return;
             }
-            return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l, m);
+            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m);
           }
         } else {
-          let m = src2[position3++];
-          let n = src2[position3++];
+          let m = src[position++];
+          let n = src[position++];
           if ((m & 128) > 0 || (n & 128) > 0) {
-            position3 -= 14;
+            position -= 14;
             return;
           }
           if (length < 15)
-            return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
-          let o = src2[position3++];
+            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
+          let o = src[position++];
           if ((o & 128) > 0) {
-            position3 -= 15;
+            position -= 15;
             return;
           }
-          return fromCharCode2(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+          return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
         }
       }
     }
   }
 }
-function readBin2(length) {
-  return currentDecoder2.copyBuffers ? (
+function readBin(length) {
+  return currentDecoder.copyBuffers ? (
     // specifically use the copying slice (not the node one)
-    Uint8Array.prototype.slice.call(src2, position3, position3 += length)
-  ) : src2.subarray(position3, position3 += length);
+    Uint8Array.prototype.slice.call(src, position, position += length)
+  ) : src.subarray(position, position += length);
 }
-var f32Array2 = new Float32Array(1);
-var u8Array2 = new Uint8Array(f32Array2.buffer, 0, 4);
-function getFloat162() {
-  let byte0 = src2[position3++];
-  let byte1 = src2[position3++];
+var f32Array = new Float32Array(1);
+var u8Array = new Uint8Array(f32Array.buffer, 0, 4);
+function getFloat16() {
+  let byte0 = src[position++];
+  let byte1 = src[position++];
   let exponent = (byte0 & 127) >> 2;
   if (exponent === 31) {
     if (byte1 || byte0 & 3)
@@ -5172,175 +5283,175 @@ function getFloat162() {
     let abs = ((byte0 & 3) << 8 | byte1) / (1 << 24);
     return byte0 & 128 ? -abs : abs;
   }
-  u8Array2[3] = byte0 & 128 | // sign bit
+  u8Array[3] = byte0 & 128 | // sign bit
   (exponent >> 1) + 56;
-  u8Array2[2] = (byte0 & 7) << 5 | // last exponent bit and first two mantissa bits
+  u8Array[2] = (byte0 & 7) << 5 | // last exponent bit and first two mantissa bits
   byte1 >> 3;
-  u8Array2[1] = byte1 << 5;
-  u8Array2[0] = 0;
-  return f32Array2[0];
+  u8Array[1] = byte1 << 5;
+  u8Array[0] = 0;
+  return f32Array[0];
 }
-var keyCache2 = new Array(4096);
-var Tag2 = class {
+var keyCache = new Array(4096);
+var Tag = class {
   constructor(value, tag) {
     this.value = value;
     this.tag = tag;
   }
 };
-currentExtensions2[0] = (dateString) => {
+currentExtensions[0] = (dateString) => {
   return new Date(dateString);
 };
-currentExtensions2[1] = (epochSec) => {
+currentExtensions[1] = (epochSec) => {
   return new Date(Math.round(epochSec * 1e3));
 };
-currentExtensions2[2] = (buffer) => {
+currentExtensions[2] = (buffer) => {
   let value = BigInt(0);
   for (let i = 0, l = buffer.byteLength; i < l; i++) {
     value = BigInt(buffer[i]) + value << BigInt(8);
   }
   return value;
 };
-currentExtensions2[3] = (buffer) => {
-  return BigInt(-1) - currentExtensions2[2](buffer);
+currentExtensions[3] = (buffer) => {
+  return BigInt(-1) - currentExtensions[2](buffer);
 };
-currentExtensions2[4] = (fraction) => {
+currentExtensions[4] = (fraction) => {
   return +(fraction[1] + "e" + fraction[0]);
 };
-currentExtensions2[5] = (fraction) => {
+currentExtensions[5] = (fraction) => {
   return fraction[1] * Math.exp(fraction[0] * Math.log(2));
 };
-var recordDefinition2 = (id, structure) => {
+var recordDefinition = (id, structure) => {
   id = id - 57344;
-  let existingStructure = currentStructures2[id];
+  let existingStructure = currentStructures[id];
   if (existingStructure && existingStructure.isShared) {
-    (currentStructures2.restoreStructures || (currentStructures2.restoreStructures = []))[id] = existingStructure;
+    (currentStructures.restoreStructures || (currentStructures.restoreStructures = []))[id] = existingStructure;
   }
-  currentStructures2[id] = structure;
-  structure.read = createStructureReader2(structure);
+  currentStructures[id] = structure;
+  structure.read = createStructureReader(structure);
 };
-currentExtensions2[LEGACY_RECORD_INLINE_ID2] = (data) => {
+currentExtensions[LEGACY_RECORD_INLINE_ID] = (data) => {
   let length = data.length;
   let structure = data[1];
-  recordDefinition2(data[0], structure);
+  recordDefinition(data[0], structure);
   let object = {};
   for (let i = 2; i < length; i++) {
     let key = structure[i - 2];
-    object[safeKey2(key)] = data[i];
+    object[safeKey(key)] = data[i];
   }
   return object;
 };
-currentExtensions2[14] = (value) => {
-  if (bundledStrings3)
-    return bundledStrings3[0].slice(bundledStrings3.position0, bundledStrings3.position0 += value);
-  return new Tag2(value, 14);
+currentExtensions[14] = (value) => {
+  if (bundledStrings)
+    return bundledStrings[0].slice(bundledStrings.position0, bundledStrings.position0 += value);
+  return new Tag(value, 14);
 };
-currentExtensions2[15] = (value) => {
-  if (bundledStrings3)
-    return bundledStrings3[1].slice(bundledStrings3.position1, bundledStrings3.position1 += value);
-  return new Tag2(value, 15);
+currentExtensions[15] = (value) => {
+  if (bundledStrings)
+    return bundledStrings[1].slice(bundledStrings.position1, bundledStrings.position1 += value);
+  return new Tag(value, 15);
 };
-var glbl2 = { Error, RegExp };
-currentExtensions2[27] = (data) => {
-  return (glbl2[data[0]] || Error)(data[1], data[2]);
+var glbl = { Error, RegExp };
+currentExtensions[27] = (data) => {
+  return (glbl[data[0]] || Error)(data[1], data[2]);
 };
-var packedTable2 = (read3) => {
-  if (src2[position3++] != 132)
+var packedTable = (read2) => {
+  if (src[position++] != 132)
     throw new Error("Packed values structure must be followed by a 4 element array");
-  let newPackedValues = read3();
-  packedValues2 = packedValues2 ? newPackedValues.concat(packedValues2.slice(newPackedValues.length)) : newPackedValues;
-  packedValues2.prefixes = read3();
-  packedValues2.suffixes = read3();
-  return read3();
+  let newPackedValues = read2();
+  packedValues = packedValues ? newPackedValues.concat(packedValues.slice(newPackedValues.length)) : newPackedValues;
+  packedValues.prefixes = read2();
+  packedValues.suffixes = read2();
+  return read2();
 };
-packedTable2.handlesRead = true;
-currentExtensions2[51] = packedTable2;
-currentExtensions2[PACKED_REFERENCE_TAG_ID2] = (data) => {
-  if (!packedValues2) {
-    if (currentDecoder2.getShared)
-      loadShared2();
+packedTable.handlesRead = true;
+currentExtensions[51] = packedTable;
+currentExtensions[PACKED_REFERENCE_TAG_ID] = (data) => {
+  if (!packedValues) {
+    if (currentDecoder.getShared)
+      loadShared();
     else
-      return new Tag2(data, PACKED_REFERENCE_TAG_ID2);
+      return new Tag(data, PACKED_REFERENCE_TAG_ID);
   }
   if (typeof data == "number")
-    return packedValues2[16 + (data >= 0 ? 2 * data : -2 * data - 1)];
+    return packedValues[16 + (data >= 0 ? 2 * data : -2 * data - 1)];
   throw new Error("No support for non-integer packed references yet");
 };
-currentExtensions2[28] = (read3) => {
-  if (!referenceMap2) {
-    referenceMap2 = /* @__PURE__ */ new Map();
-    referenceMap2.id = 0;
+currentExtensions[28] = (read2) => {
+  if (!referenceMap) {
+    referenceMap = /* @__PURE__ */ new Map();
+    referenceMap.id = 0;
   }
-  let id = referenceMap2.id++;
-  let token = src2[position3];
-  let target3;
+  let id = referenceMap.id++;
+  let token = src[position];
+  let target2;
   if (token >> 5 == 4)
-    target3 = [];
+    target2 = [];
   else
-    target3 = {};
-  let refEntry = { target: target3 };
-  referenceMap2.set(id, refEntry);
-  let targetProperties = read3();
+    target2 = {};
+  let refEntry = { target: target2 };
+  referenceMap.set(id, refEntry);
+  let targetProperties = read2();
   if (refEntry.used)
-    return Object.assign(target3, targetProperties);
+    return Object.assign(target2, targetProperties);
   refEntry.target = targetProperties;
   return targetProperties;
 };
-currentExtensions2[28].handlesRead = true;
-currentExtensions2[29] = (id) => {
-  let refEntry = referenceMap2.get(id);
+currentExtensions[28].handlesRead = true;
+currentExtensions[29] = (id) => {
+  let refEntry = referenceMap.get(id);
   refEntry.used = true;
   return refEntry.target;
 };
-currentExtensions2[258] = (array) => new Set(array);
-(currentExtensions2[259] = (read3) => {
-  if (currentDecoder2.mapsAsObjects) {
-    currentDecoder2.mapsAsObjects = false;
-    restoreMapsAsObject2 = true;
+currentExtensions[258] = (array) => new Set(array);
+(currentExtensions[259] = (read2) => {
+  if (currentDecoder.mapsAsObjects) {
+    currentDecoder.mapsAsObjects = false;
+    restoreMapsAsObject = true;
   }
-  return read3();
+  return read2();
 }).handlesRead = true;
-function combine2(a, b) {
+function combine(a, b) {
   if (typeof a === "string")
     return a + b;
   if (a instanceof Array)
     return a.concat(b);
   return Object.assign({}, a, b);
 }
-function getPackedValues2() {
-  if (!packedValues2) {
-    if (currentDecoder2.getShared)
-      loadShared2();
+function getPackedValues() {
+  if (!packedValues) {
+    if (currentDecoder.getShared)
+      loadShared();
     else
       throw new Error("No packed values available");
   }
-  return packedValues2;
+  return packedValues;
 }
-var SHARED_DATA_TAG_ID2 = 1399353956;
-currentExtensionRanges2.push((tag, input) => {
+var SHARED_DATA_TAG_ID = 1399353956;
+currentExtensionRanges.push((tag, input) => {
   if (tag >= 225 && tag <= 255)
-    return combine2(getPackedValues2().prefixes[tag - 224], input);
+    return combine(getPackedValues().prefixes[tag - 224], input);
   if (tag >= 28704 && tag <= 32767)
-    return combine2(getPackedValues2().prefixes[tag - 28672], input);
+    return combine(getPackedValues().prefixes[tag - 28672], input);
   if (tag >= 1879052288 && tag <= 2147483647)
-    return combine2(getPackedValues2().prefixes[tag - 1879048192], input);
+    return combine(getPackedValues().prefixes[tag - 1879048192], input);
   if (tag >= 216 && tag <= 223)
-    return combine2(input, getPackedValues2().suffixes[tag - 216]);
+    return combine(input, getPackedValues().suffixes[tag - 216]);
   if (tag >= 27647 && tag <= 28671)
-    return combine2(input, getPackedValues2().suffixes[tag - 27639]);
+    return combine(input, getPackedValues().suffixes[tag - 27639]);
   if (tag >= 1811940352 && tag <= 1879048191)
-    return combine2(input, getPackedValues2().suffixes[tag - 1811939328]);
-  if (tag == SHARED_DATA_TAG_ID2) {
+    return combine(input, getPackedValues().suffixes[tag - 1811939328]);
+  if (tag == SHARED_DATA_TAG_ID) {
     return {
-      packedValues: packedValues2,
-      structures: currentStructures2.slice(0),
+      packedValues,
+      structures: currentStructures.slice(0),
       version: input
     };
   }
   if (tag == 55799)
     return input;
 });
-var isLittleEndianMachine3 = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
-var typedArrays2 = [
+var isLittleEndianMachine = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
+var typedArrays = [
   Uint8Array,
   Uint8ClampedArray,
   Uint16Array,
@@ -5353,11 +5464,11 @@ var typedArrays2 = [
   Float32Array,
   Float64Array
 ];
-var typedArrayTags2 = [64, 68, 69, 70, 71, 72, 77, 78, 79, 85, 86];
-for (let i = 0; i < typedArrays2.length; i++) {
-  registerTypedArray2(typedArrays2[i], typedArrayTags2[i]);
+var typedArrayTags = [64, 68, 69, 70, 71, 72, 77, 78, 79, 85, 86];
+for (let i = 0; i < typedArrays.length; i++) {
+  registerTypedArray(typedArrays[i], typedArrayTags[i]);
 }
-function registerTypedArray2(TypedArray, tag) {
+function registerTypedArray(TypedArray, tag) {
   let dvMethod = "get" + TypedArray.name.slice(0, -5);
   if (typeof TypedArray !== "function")
     TypedArray = null;
@@ -5366,7 +5477,7 @@ function registerTypedArray2(TypedArray, tag) {
     if (!littleEndian && bytesPerElement == 1)
       continue;
     let sizeShift = bytesPerElement == 2 ? 1 : bytesPerElement == 4 ? 2 : 3;
-    currentExtensions2[littleEndian ? tag : tag - 4] = bytesPerElement == 1 || littleEndian == isLittleEndianMachine3 ? (buffer) => {
+    currentExtensions[littleEndian ? tag : tag - 4] = bytesPerElement == 1 || littleEndian == isLittleEndianMachine ? (buffer) => {
       if (!TypedArray)
         throw new Error("Could not find typed array for code " + tag);
       return new TypedArray(Uint8Array.prototype.slice.call(buffer, 0).buffer);
@@ -5384,133 +5495,133 @@ function registerTypedArray2(TypedArray, tag) {
     };
   }
 }
-function readBundleExt2() {
-  let length = readJustLength2();
-  let bundlePosition = position3 + read2();
+function readBundleExt() {
+  let length = readJustLength();
+  let bundlePosition = position + read();
   for (let i = 2; i < length; i++) {
-    let bundleLength = readJustLength2();
-    position3 += bundleLength;
+    let bundleLength = readJustLength();
+    position += bundleLength;
   }
-  let dataPosition = position3;
-  position3 = bundlePosition;
-  bundledStrings3 = [readStringJS2(readJustLength2()), readStringJS2(readJustLength2())];
-  bundledStrings3.position0 = 0;
-  bundledStrings3.position1 = 0;
-  bundledStrings3.postBundlePosition = position3;
-  position3 = dataPosition;
-  return read2();
+  let dataPosition = position;
+  position = bundlePosition;
+  bundledStrings = [readStringJS(readJustLength()), readStringJS(readJustLength())];
+  bundledStrings.position0 = 0;
+  bundledStrings.position1 = 0;
+  bundledStrings.postBundlePosition = position;
+  position = dataPosition;
+  return read();
 }
-function readJustLength2() {
-  let token = src2[position3++] & 31;
+function readJustLength() {
+  let token = src[position++] & 31;
   if (token > 23) {
     switch (token) {
       case 24:
-        token = src2[position3++];
+        token = src[position++];
         break;
       case 25:
-        token = dataView2.getUint16(position3);
-        position3 += 2;
+        token = dataView.getUint16(position);
+        position += 2;
         break;
       case 26:
-        token = dataView2.getUint32(position3);
-        position3 += 4;
+        token = dataView.getUint32(position);
+        position += 4;
         break;
     }
   }
   return token;
 }
-function loadShared2() {
-  if (currentDecoder2.getShared) {
-    let sharedData = saveState2(() => {
-      src2 = null;
-      return currentDecoder2.getShared();
+function loadShared() {
+  if (currentDecoder.getShared) {
+    let sharedData = saveState(() => {
+      src = null;
+      return currentDecoder.getShared();
     }) || {};
     let updatedStructures = sharedData.structures || [];
-    currentDecoder2.sharedVersion = sharedData.version;
-    packedValues2 = currentDecoder2.sharedValues = sharedData.packedValues;
-    if (currentStructures2 === true)
-      currentDecoder2.structures = currentStructures2 = updatedStructures;
+    currentDecoder.sharedVersion = sharedData.version;
+    packedValues = currentDecoder.sharedValues = sharedData.packedValues;
+    if (currentStructures === true)
+      currentDecoder.structures = currentStructures = updatedStructures;
     else
-      currentStructures2.splice.apply(currentStructures2, [0, updatedStructures.length].concat(updatedStructures));
+      currentStructures.splice.apply(currentStructures, [0, updatedStructures.length].concat(updatedStructures));
   }
 }
-function saveState2(callback) {
-  let savedSrcEnd = srcEnd2;
-  let savedPosition = position3;
-  let savedStringPosition = stringPosition2;
-  let savedSrcStringStart = srcStringStart2;
-  let savedSrcStringEnd = srcStringEnd2;
-  let savedSrcString = srcString2;
-  let savedStrings = strings2;
-  let savedReferenceMap = referenceMap2;
-  let savedBundledStrings = bundledStrings3;
-  let savedSrc = new Uint8Array(src2.slice(0, srcEnd2));
-  let savedStructures = currentStructures2;
-  let savedDecoder = currentDecoder2;
-  let savedSequentialMode = sequentialMode2;
+function saveState(callback) {
+  let savedSrcEnd = srcEnd;
+  let savedPosition = position;
+  let savedStringPosition = stringPosition;
+  let savedSrcStringStart = srcStringStart;
+  let savedSrcStringEnd = srcStringEnd;
+  let savedSrcString = srcString;
+  let savedStrings = strings;
+  let savedReferenceMap = referenceMap;
+  let savedBundledStrings = bundledStrings;
+  let savedSrc = new Uint8Array(src.slice(0, srcEnd));
+  let savedStructures = currentStructures;
+  let savedDecoder = currentDecoder;
+  let savedSequentialMode = sequentialMode;
   let value = callback();
-  srcEnd2 = savedSrcEnd;
-  position3 = savedPosition;
-  stringPosition2 = savedStringPosition;
-  srcStringStart2 = savedSrcStringStart;
-  srcStringEnd2 = savedSrcStringEnd;
-  srcString2 = savedSrcString;
-  strings2 = savedStrings;
-  referenceMap2 = savedReferenceMap;
-  bundledStrings3 = savedBundledStrings;
-  src2 = savedSrc;
-  sequentialMode2 = savedSequentialMode;
-  currentStructures2 = savedStructures;
-  currentDecoder2 = savedDecoder;
-  dataView2 = new DataView(src2.buffer, src2.byteOffset, src2.byteLength);
+  srcEnd = savedSrcEnd;
+  position = savedPosition;
+  stringPosition = savedStringPosition;
+  srcStringStart = savedSrcStringStart;
+  srcStringEnd = savedSrcStringEnd;
+  srcString = savedSrcString;
+  strings = savedStrings;
+  referenceMap = savedReferenceMap;
+  bundledStrings = savedBundledStrings;
+  src = savedSrc;
+  sequentialMode = savedSequentialMode;
+  currentStructures = savedStructures;
+  currentDecoder = savedDecoder;
+  dataView = new DataView(src.buffer, src.byteOffset, src.byteLength);
   return value;
 }
-function clearSource2() {
-  src2 = null;
-  referenceMap2 = null;
-  currentStructures2 = null;
+function clearSource() {
+  src = null;
+  referenceMap = null;
+  currentStructures = null;
 }
-function addExtension3(extension) {
-  currentExtensions2[extension.tag] = extension.decode;
+function addExtension(extension) {
+  currentExtensions[extension.tag] = extension.decode;
 }
-var mult102 = new Array(147);
+var mult10 = new Array(147);
 for (let i = 0; i < 256; i++) {
-  mult102[i] = +("1e" + Math.floor(45.15 - i * 0.30103));
+  mult10[i] = +("1e" + Math.floor(45.15 - i * 0.30103));
 }
-var defaultDecoder2 = new Decoder2({ useRecords: false });
-var decode2 = defaultDecoder2.decode;
-var decodeMultiple2 = defaultDecoder2.decodeMultiple;
-var FLOAT32_OPTIONS2 = {
+var defaultDecoder = new Decoder({ useRecords: false });
+var decode2 = defaultDecoder.decode;
+var decodeMultiple = defaultDecoder.decodeMultiple;
+var FLOAT32_OPTIONS = {
   NEVER: 0,
   ALWAYS: 1,
   DECIMAL_ROUND: 3,
   DECIMAL_FIT: 4
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/encode.js
-var textEncoder2;
+// node_modules/@progrium/duplex/esm/vnd/cbor-x-1.4.1/encode.js
+var textEncoder;
 try {
-  textEncoder2 = new TextEncoder();
+  textEncoder = new TextEncoder();
 } catch (error) {
 }
-var extensions2;
-var extensionClasses2;
-var Buffer3 = globalThis.Buffer;
-var hasNodeBuffer2 = typeof Buffer3 !== "undefined";
-var ByteArrayAllocate2 = hasNodeBuffer2 ? Buffer3.allocUnsafeSlow : Uint8Array;
-var ByteArray2 = hasNodeBuffer2 ? Buffer3 : Uint8Array;
-var MAX_STRUCTURES2 = 256;
-var MAX_BUFFER_SIZE2 = hasNodeBuffer2 ? 4294967296 : 2144337920;
-var throwOnIterable2;
-var target2;
-var targetView2;
-var position4 = 0;
-var safeEnd2;
-var bundledStrings4 = null;
-var MAX_BUNDLE_SIZE2 = 61440;
-var hasNonLatin2 = /[\u0080-\uFFFF]/;
-var RECORD_SYMBOL2 = /* @__PURE__ */ Symbol("record-id");
-var Encoder2 = class extends Decoder2 {
+var extensions;
+var extensionClasses;
+var Buffer2 = globalThis.Buffer;
+var hasNodeBuffer = typeof Buffer2 !== "undefined";
+var ByteArrayAllocate = hasNodeBuffer ? Buffer2.allocUnsafeSlow : Uint8Array;
+var ByteArray = hasNodeBuffer ? Buffer2 : Uint8Array;
+var MAX_STRUCTURES = 256;
+var MAX_BUFFER_SIZE = hasNodeBuffer ? 4294967296 : 2144337920;
+var throwOnIterable;
+var target;
+var targetView;
+var position2 = 0;
+var safeEnd;
+var bundledStrings2 = null;
+var MAX_BUNDLE_SIZE = 61440;
+var hasNonLatin = /[\u0080-\uFFFF]/;
+var RECORD_SYMBOL = /* @__PURE__ */ Symbol("record-id");
+var Encoder = class extends Decoder {
   constructor(options) {
     super(options);
     this.offset = 0;
@@ -5519,12 +5630,12 @@ var Encoder2 = class extends Decoder2 {
     let sharedStructures;
     let hasSharedUpdate;
     let structures;
-    let referenceMap3;
+    let referenceMap2;
     options = options || {};
-    let encodeUtf8 = ByteArray2.prototype.utf8Write ? function(string, position5, maxBytes) {
-      return target2.utf8Write(string, position5, maxBytes);
-    } : textEncoder2 && textEncoder2.encodeInto ? function(string, position5) {
-      return textEncoder2.encodeInto(string, target2.subarray(position5)).written;
+    let encodeUtf8 = ByteArray.prototype.utf8Write ? function(string, position3, maxBytes) {
+      return target.utf8Write(string, position3, maxBytes);
+    } : textEncoder && textEncoder.encodeInto ? function(string, position3) {
+      return textEncoder.encodeInto(string, target.subarray(position3)).written;
     } : false;
     let encoder = this;
     let hasSharedStructures = options.structures || options.saveStructures;
@@ -5563,30 +5674,30 @@ var Encoder2 = class extends Decoder2 {
       return this.encode(value, encodeOptions);
     };
     this.encode = function(value, encodeOptions) {
-      if (!target2) {
-        target2 = new ByteArrayAllocate2(8192);
-        targetView2 = new DataView(target2.buffer, 0, 8192);
-        position4 = 0;
+      if (!target) {
+        target = new ByteArrayAllocate(8192);
+        targetView = new DataView(target.buffer, 0, 8192);
+        position2 = 0;
       }
-      safeEnd2 = target2.length - 10;
-      if (safeEnd2 - position4 < 2048) {
-        target2 = new ByteArrayAllocate2(target2.length);
-        targetView2 = new DataView(target2.buffer, 0, target2.length);
-        safeEnd2 = target2.length - 10;
-        position4 = 0;
-      } else if (encodeOptions === REUSE_BUFFER_MODE2)
-        position4 = position4 + 7 & 2147483640;
-      start = position4;
+      safeEnd = target.length - 10;
+      if (safeEnd - position2 < 2048) {
+        target = new ByteArrayAllocate(target.length);
+        targetView = new DataView(target.buffer, 0, target.length);
+        safeEnd = target.length - 10;
+        position2 = 0;
+      } else if (encodeOptions === REUSE_BUFFER_MODE)
+        position2 = position2 + 7 & 2147483640;
+      start = position2;
       if (encoder.useSelfDescribedHeader) {
-        targetView2.setUint32(position4, 3654940416);
-        position4 += 3;
+        targetView.setUint32(position2, 3654940416);
+        position2 += 3;
       }
-      referenceMap3 = encoder.structuredClone ? /* @__PURE__ */ new Map() : null;
+      referenceMap2 = encoder.structuredClone ? /* @__PURE__ */ new Map() : null;
       if (encoder.bundleStrings && typeof value !== "string") {
-        bundledStrings4 = [];
-        bundledStrings4.size = Infinity;
+        bundledStrings2 = [];
+        bundledStrings2.size = Infinity;
       } else
-        bundledStrings4 = null;
+        bundledStrings2 = null;
       sharedStructures = encoder.structures;
       if (sharedStructures) {
         if (sharedStructures.uninitialized) {
@@ -5611,8 +5722,8 @@ var Encoder2 = class extends Decoder2 {
               continue;
             let nextTransition, transition = sharedStructures.transitions;
             for (let j = 0, l = keys.length; j < l; j++) {
-              if (transition[RECORD_SYMBOL2] === void 0)
-                transition[RECORD_SYMBOL2] = i;
+              if (transition[RECORD_SYMBOL] === void 0)
+                transition[RECORD_SYMBOL] = i;
               let key = keys[j];
               nextTransition = transition[key];
               if (!nextTransition) {
@@ -5620,7 +5731,7 @@ var Encoder2 = class extends Decoder2 {
               }
               transition = nextTransition;
             }
-            transition[RECORD_SYMBOL2] = i | 1048576;
+            transition[RECORD_SYMBOL] = i | 1048576;
           }
         }
         if (!isSequential)
@@ -5631,51 +5742,51 @@ var Encoder2 = class extends Decoder2 {
       structures = sharedStructures || [];
       packedObjectMap2 = sharedPackedObjectMap2;
       if (options.pack) {
-        let packedValues3 = /* @__PURE__ */ new Map();
-        packedValues3.values = [];
-        packedValues3.encoder = encoder;
-        packedValues3.maxValues = options.maxPrivatePackedValues || (sharedPackedObjectMap2 ? 16 : Infinity);
-        packedValues3.objectMap = sharedPackedObjectMap2 || false;
-        packedValues3.samplingPackedValues = samplingPackedValues;
-        findRepetitiveStrings2(value, packedValues3);
-        if (packedValues3.values.length > 0) {
-          target2[position4++] = 216;
-          target2[position4++] = 51;
-          writeArrayHeader2(4);
-          let valuesArray = packedValues3.values;
+        let packedValues2 = /* @__PURE__ */ new Map();
+        packedValues2.values = [];
+        packedValues2.encoder = encoder;
+        packedValues2.maxValues = options.maxPrivatePackedValues || (sharedPackedObjectMap2 ? 16 : Infinity);
+        packedValues2.objectMap = sharedPackedObjectMap2 || false;
+        packedValues2.samplingPackedValues = samplingPackedValues;
+        findRepetitiveStrings(value, packedValues2);
+        if (packedValues2.values.length > 0) {
+          target[position2++] = 216;
+          target[position2++] = 51;
+          writeArrayHeader(4);
+          let valuesArray = packedValues2.values;
           encode3(valuesArray);
-          writeArrayHeader2(0);
-          writeArrayHeader2(0);
+          writeArrayHeader(0);
+          writeArrayHeader(0);
           packedObjectMap2 = Object.create(sharedPackedObjectMap2 || null);
           for (let i = 0, l = valuesArray.length; i < l; i++) {
             packedObjectMap2[valuesArray[i]] = i;
           }
         }
       }
-      throwOnIterable2 = encodeOptions & THROW_ON_ITERABLE2;
+      throwOnIterable = encodeOptions & THROW_ON_ITERABLE;
       try {
-        if (throwOnIterable2)
+        if (throwOnIterable)
           return;
         encode3(value);
-        if (bundledStrings4) {
-          writeBundles2(start, encode3);
+        if (bundledStrings2) {
+          writeBundles(start, encode3);
         }
-        encoder.offset = position4;
-        if (referenceMap3 && referenceMap3.idsToInsert) {
-          position4 += referenceMap3.idsToInsert.length * 2;
-          if (position4 > safeEnd2)
-            makeRoom(position4);
-          encoder.offset = position4;
-          let serialized = insertIds2(target2.subarray(start, position4), referenceMap3.idsToInsert);
-          referenceMap3 = null;
+        encoder.offset = position2;
+        if (referenceMap2 && referenceMap2.idsToInsert) {
+          position2 += referenceMap2.idsToInsert.length * 2;
+          if (position2 > safeEnd)
+            makeRoom(position2);
+          encoder.offset = position2;
+          let serialized = insertIds(target.subarray(start, position2), referenceMap2.idsToInsert);
+          referenceMap2 = null;
           return serialized;
         }
-        if (encodeOptions & REUSE_BUFFER_MODE2) {
-          target2.start = start;
-          target2.end = position4;
-          return target2;
+        if (encodeOptions & REUSE_BUFFER_MODE) {
+          target.start = start;
+          target.end = position2;
+          return target;
         }
-        return target2.subarray(start, position4);
+        return target.subarray(start, position2);
       } finally {
         if (sharedStructures) {
           if (serializationsSinceTransitionRebuild < 10)
@@ -5690,7 +5801,7 @@ var Encoder2 = class extends Decoder2 {
               recordIdsToRemove = [];
           } else if (recordIdsToRemove.length > 0 && !isSequential) {
             for (let i = 0, l = recordIdsToRemove.length; i < l; i++) {
-              recordIdsToRemove[i][RECORD_SYMBOL2] = void 0;
+              recordIdsToRemove[i][RECORD_SYMBOL] = void 0;
             }
             recordIdsToRemove = [];
           }
@@ -5699,13 +5810,13 @@ var Encoder2 = class extends Decoder2 {
           if (encoder.structures.length > maxSharedStructures) {
             encoder.structures = encoder.structures.slice(0, maxSharedStructures);
           }
-          let returnBuffer = target2.subarray(start, position4);
+          let returnBuffer = target.subarray(start, position2);
           if (encoder.updateSharedData() === false)
             return encoder.encode(value);
           return returnBuffer;
         }
-        if (encodeOptions & RESET_BUFFER_MODE2)
-          position4 = start;
+        if (encodeOptions & RESET_BUFFER_MODE)
+          position2 = start;
       }
     };
     this.findCommonStringsToPack = () => {
@@ -5714,12 +5825,12 @@ var Encoder2 = class extends Decoder2 {
         sharedPackedObjectMap2 = /* @__PURE__ */ Object.create(null);
       return (options2) => {
         let threshold = options2 && options2.threshold || 4;
-        let position5 = this.pack ? options2.maxPrivatePackedValues || 16 : 0;
+        let position3 = this.pack ? options2.maxPrivatePackedValues || 16 : 0;
         if (!sharedValues)
           sharedValues = this.sharedValues = [];
         for (let [key, status] of samplingPackedValues) {
           if (status.count > threshold) {
-            sharedPackedObjectMap2[key] = position5++;
+            sharedPackedObjectMap2[key] = position3++;
             sharedValues.push(key);
             hasSharedUpdate = true;
           }
@@ -5730,8 +5841,8 @@ var Encoder2 = class extends Decoder2 {
       };
     };
     const encode3 = (value) => {
-      if (position4 > safeEnd2)
-        target2 = makeRoom(position4);
+      if (position2 > safeEnd)
+        target = makeRoom(position2);
       var type = typeof value;
       var length;
       if (type === "string") {
@@ -5739,9 +5850,9 @@ var Encoder2 = class extends Decoder2 {
           let packedPosition = packedObjectMap2[value];
           if (packedPosition >= 0) {
             if (packedPosition < 16)
-              target2[position4++] = packedPosition + 224;
+              target[position2++] = packedPosition + 224;
             else {
-              target2[position4++] = 198;
+              target[position2++] = 198;
               if (packedPosition & 1)
                 encode3(15 - packedPosition >> 1);
               else
@@ -5759,29 +5870,29 @@ var Encoder2 = class extends Decoder2 {
           }
         }
         let strLength = value.length;
-        if (bundledStrings4 && strLength >= 4 && strLength < 1024) {
-          if ((bundledStrings4.size += strLength) > MAX_BUNDLE_SIZE2) {
+        if (bundledStrings2 && strLength >= 4 && strLength < 1024) {
+          if ((bundledStrings2.size += strLength) > MAX_BUNDLE_SIZE) {
             let extStart;
-            let maxBytes2 = (bundledStrings4[0] ? bundledStrings4[0].length * 3 + bundledStrings4[1].length : 0) + 10;
-            if (position4 + maxBytes2 > safeEnd2)
-              target2 = makeRoom(position4 + maxBytes2);
-            target2[position4++] = 217;
-            target2[position4++] = 223;
-            target2[position4++] = 249;
-            target2[position4++] = bundledStrings4.position ? 132 : 130;
-            target2[position4++] = 26;
-            extStart = position4 - start;
-            position4 += 4;
-            if (bundledStrings4.position) {
-              writeBundles2(start, encode3);
+            let maxBytes2 = (bundledStrings2[0] ? bundledStrings2[0].length * 3 + bundledStrings2[1].length : 0) + 10;
+            if (position2 + maxBytes2 > safeEnd)
+              target = makeRoom(position2 + maxBytes2);
+            target[position2++] = 217;
+            target[position2++] = 223;
+            target[position2++] = 249;
+            target[position2++] = bundledStrings2.position ? 132 : 130;
+            target[position2++] = 26;
+            extStart = position2 - start;
+            position2 += 4;
+            if (bundledStrings2.position) {
+              writeBundles(start, encode3);
             }
-            bundledStrings4 = ["", ""];
-            bundledStrings4.size = 0;
-            bundledStrings4.position = extStart;
+            bundledStrings2 = ["", ""];
+            bundledStrings2.size = 0;
+            bundledStrings2.position = extStart;
           }
-          let twoByte = hasNonLatin2.test(value);
-          bundledStrings4[twoByte ? 0 : 1] += value;
-          target2[position4++] = twoByte ? 206 : 207;
+          let twoByte = hasNonLatin.test(value);
+          bundledStrings2[twoByte ? 0 : 1] += value;
+          target[position2++] = twoByte ? 206 : 207;
           encode3(strLength);
           return;
         }
@@ -5796,126 +5907,126 @@ var Encoder2 = class extends Decoder2 {
           headerSize = 5;
         }
         let maxBytes = strLength * 3;
-        if (position4 + maxBytes > safeEnd2)
-          target2 = makeRoom(position4 + maxBytes);
+        if (position2 + maxBytes > safeEnd)
+          target = makeRoom(position2 + maxBytes);
         if (strLength < 64 || !encodeUtf8) {
-          let i, c1, c2, strPosition = position4 + headerSize;
+          let i, c1, c2, strPosition = position2 + headerSize;
           for (i = 0; i < strLength; i++) {
             c1 = value.charCodeAt(i);
             if (c1 < 128) {
-              target2[strPosition++] = c1;
+              target[strPosition++] = c1;
             } else if (c1 < 2048) {
-              target2[strPosition++] = c1 >> 6 | 192;
-              target2[strPosition++] = c1 & 63 | 128;
+              target[strPosition++] = c1 >> 6 | 192;
+              target[strPosition++] = c1 & 63 | 128;
             } else if ((c1 & 64512) === 55296 && ((c2 = value.charCodeAt(i + 1)) & 64512) === 56320) {
               c1 = 65536 + ((c1 & 1023) << 10) + (c2 & 1023);
               i++;
-              target2[strPosition++] = c1 >> 18 | 240;
-              target2[strPosition++] = c1 >> 12 & 63 | 128;
-              target2[strPosition++] = c1 >> 6 & 63 | 128;
-              target2[strPosition++] = c1 & 63 | 128;
+              target[strPosition++] = c1 >> 18 | 240;
+              target[strPosition++] = c1 >> 12 & 63 | 128;
+              target[strPosition++] = c1 >> 6 & 63 | 128;
+              target[strPosition++] = c1 & 63 | 128;
             } else {
-              target2[strPosition++] = c1 >> 12 | 224;
-              target2[strPosition++] = c1 >> 6 & 63 | 128;
-              target2[strPosition++] = c1 & 63 | 128;
+              target[strPosition++] = c1 >> 12 | 224;
+              target[strPosition++] = c1 >> 6 & 63 | 128;
+              target[strPosition++] = c1 & 63 | 128;
             }
           }
-          length = strPosition - position4 - headerSize;
+          length = strPosition - position2 - headerSize;
         } else {
-          length = encodeUtf8(value, position4 + headerSize, maxBytes);
+          length = encodeUtf8(value, position2 + headerSize, maxBytes);
         }
         if (length < 24) {
-          target2[position4++] = 96 | length;
+          target[position2++] = 96 | length;
         } else if (length < 256) {
           if (headerSize < 2) {
-            target2.copyWithin(position4 + 2, position4 + 1, position4 + 1 + length);
+            target.copyWithin(position2 + 2, position2 + 1, position2 + 1 + length);
           }
-          target2[position4++] = 120;
-          target2[position4++] = length;
+          target[position2++] = 120;
+          target[position2++] = length;
         } else if (length < 65536) {
           if (headerSize < 3) {
-            target2.copyWithin(position4 + 3, position4 + 2, position4 + 2 + length);
+            target.copyWithin(position2 + 3, position2 + 2, position2 + 2 + length);
           }
-          target2[position4++] = 121;
-          target2[position4++] = length >> 8;
-          target2[position4++] = length & 255;
+          target[position2++] = 121;
+          target[position2++] = length >> 8;
+          target[position2++] = length & 255;
         } else {
           if (headerSize < 5) {
-            target2.copyWithin(position4 + 5, position4 + 3, position4 + 3 + length);
+            target.copyWithin(position2 + 5, position2 + 3, position2 + 3 + length);
           }
-          target2[position4++] = 122;
-          targetView2.setUint32(position4, length);
-          position4 += 4;
+          target[position2++] = 122;
+          targetView.setUint32(position2, length);
+          position2 += 4;
         }
-        position4 += length;
+        position2 += length;
       } else if (type === "number") {
         if (!this.alwaysUseFloat && value >>> 0 === value) {
           if (value < 24) {
-            target2[position4++] = value;
+            target[position2++] = value;
           } else if (value < 256) {
-            target2[position4++] = 24;
-            target2[position4++] = value;
+            target[position2++] = 24;
+            target[position2++] = value;
           } else if (value < 65536) {
-            target2[position4++] = 25;
-            target2[position4++] = value >> 8;
-            target2[position4++] = value & 255;
+            target[position2++] = 25;
+            target[position2++] = value >> 8;
+            target[position2++] = value & 255;
           } else {
-            target2[position4++] = 26;
-            targetView2.setUint32(position4, value);
-            position4 += 4;
+            target[position2++] = 26;
+            targetView.setUint32(position2, value);
+            position2 += 4;
           }
         } else if (!this.alwaysUseFloat && value >> 0 === value) {
           if (value >= -24) {
-            target2[position4++] = 31 - value;
+            target[position2++] = 31 - value;
           } else if (value >= -256) {
-            target2[position4++] = 56;
-            target2[position4++] = ~value;
+            target[position2++] = 56;
+            target[position2++] = ~value;
           } else if (value >= -65536) {
-            target2[position4++] = 57;
-            targetView2.setUint16(position4, ~value);
-            position4 += 2;
+            target[position2++] = 57;
+            targetView.setUint16(position2, ~value);
+            position2 += 2;
           } else {
-            target2[position4++] = 58;
-            targetView2.setUint32(position4, ~value);
-            position4 += 4;
+            target[position2++] = 58;
+            targetView.setUint32(position2, ~value);
+            position2 += 4;
           }
         } else {
           let useFloat32;
           if ((useFloat32 = this.useFloat32) > 0 && value < 4294967296 && value >= -2147483648) {
-            target2[position4++] = 250;
-            targetView2.setFloat32(position4, value);
+            target[position2++] = 250;
+            targetView.setFloat32(position2, value);
             let xShifted;
             if (useFloat32 < 4 || // this checks for rounding of numbers that were encoded in 32-bit float to nearest significant decimal digit that could be preserved
-            (xShifted = value * mult102[(target2[position4] & 127) << 1 | target2[position4 + 1] >> 7]) >> 0 === xShifted) {
-              position4 += 4;
+            (xShifted = value * mult10[(target[position2] & 127) << 1 | target[position2 + 1] >> 7]) >> 0 === xShifted) {
+              position2 += 4;
               return;
             } else
-              position4--;
+              position2--;
           }
-          target2[position4++] = 251;
-          targetView2.setFloat64(position4, value);
-          position4 += 8;
+          target[position2++] = 251;
+          targetView.setFloat64(position2, value);
+          position2 += 8;
         }
       } else if (type === "object") {
         if (!value)
-          target2[position4++] = 246;
+          target[position2++] = 246;
         else {
-          if (referenceMap3) {
-            let referee = referenceMap3.get(value);
+          if (referenceMap2) {
+            let referee = referenceMap2.get(value);
             if (referee) {
-              target2[position4++] = 216;
-              target2[position4++] = 29;
-              target2[position4++] = 25;
+              target[position2++] = 216;
+              target[position2++] = 29;
+              target[position2++] = 25;
               if (!referee.references) {
-                let idsToInsert = referenceMap3.idsToInsert || (referenceMap3.idsToInsert = []);
+                let idsToInsert = referenceMap2.idsToInsert || (referenceMap2.idsToInsert = []);
                 referee.references = [];
                 idsToInsert.push(referee);
               }
-              referee.references.push(position4 - start);
-              position4 += 2;
+              referee.references.push(position2 - start);
+              position2 += 2;
               return;
             } else
-              referenceMap3.set(value, { offset: position4 - start });
+              referenceMap2.set(value, { offset: position2 - start });
           }
           let constructor = value.constructor;
           if (constructor === Object) {
@@ -5923,33 +6034,33 @@ var Encoder2 = class extends Decoder2 {
           } else if (constructor === Array) {
             length = value.length;
             if (length < 24) {
-              target2[position4++] = 128 | length;
+              target[position2++] = 128 | length;
             } else {
-              writeArrayHeader2(length);
+              writeArrayHeader(length);
             }
             for (let i = 0; i < length; i++) {
               encode3(value[i]);
             }
           } else if (constructor === Map) {
             if (this.mapsAsObjects ? this.useTag259ForMaps !== false : this.useTag259ForMaps) {
-              target2[position4++] = 217;
-              target2[position4++] = 1;
-              target2[position4++] = 3;
+              target[position2++] = 217;
+              target[position2++] = 1;
+              target[position2++] = 3;
             }
             length = value.size;
             if (length < 24) {
-              target2[position4++] = 160 | length;
+              target[position2++] = 160 | length;
             } else if (length < 256) {
-              target2[position4++] = 184;
-              target2[position4++] = length;
+              target[position2++] = 184;
+              target[position2++] = length;
             } else if (length < 65536) {
-              target2[position4++] = 185;
-              target2[position4++] = length >> 8;
-              target2[position4++] = length & 255;
+              target[position2++] = 185;
+              target[position2++] = length >> 8;
+              target[position2++] = length & 255;
             } else {
-              target2[position4++] = 186;
-              targetView2.setUint32(position4, length);
-              position4 += 4;
+              target[position2++] = 186;
+              targetView.setUint32(position2, length);
+              position2 += 4;
             }
             if (encoder.keyMap) {
               for (let [key, entryValue] of value) {
@@ -5963,45 +6074,45 @@ var Encoder2 = class extends Decoder2 {
               }
             }
           } else {
-            for (let i = 0, l = extensions2.length; i < l; i++) {
-              let extensionClass = extensionClasses2[i];
+            for (let i = 0, l = extensions.length; i < l; i++) {
+              let extensionClass = extensionClasses[i];
               if (value instanceof extensionClass) {
-                let extension = extensions2[i];
+                let extension = extensions[i];
                 let tag = extension.tag;
                 if (tag == void 0)
                   tag = extension.getTag && extension.getTag.call(this, value);
                 if (tag < 24) {
-                  target2[position4++] = 192 | tag;
+                  target[position2++] = 192 | tag;
                 } else if (tag < 256) {
-                  target2[position4++] = 216;
-                  target2[position4++] = tag;
+                  target[position2++] = 216;
+                  target[position2++] = tag;
                 } else if (tag < 65536) {
-                  target2[position4++] = 217;
-                  target2[position4++] = tag >> 8;
-                  target2[position4++] = tag & 255;
+                  target[position2++] = 217;
+                  target[position2++] = tag >> 8;
+                  target[position2++] = tag & 255;
                 } else if (tag > -1) {
-                  target2[position4++] = 218;
-                  targetView2.setUint32(position4, tag);
-                  position4 += 4;
+                  target[position2++] = 218;
+                  targetView.setUint32(position2, tag);
+                  position2 += 4;
                 }
                 extension.encode.call(this, value, encode3, makeRoom);
                 return;
               }
             }
             if (value[Symbol.iterator]) {
-              if (throwOnIterable2) {
+              if (throwOnIterable) {
                 let error = new Error("Iterable should be serialized as iterator");
                 error.iteratorNotHandled = true;
                 throw error;
               }
-              target2[position4++] = 159;
+              target[position2++] = 159;
               for (let entry of value) {
                 encode3(entry);
               }
-              target2[position4++] = 255;
+              target[position2++] = 255;
               return;
             }
-            if (value[Symbol.asyncIterator] || isBlob2(value)) {
+            if (value[Symbol.asyncIterator] || isBlob(value)) {
               let error = new Error("Iterable/blob should be serialized as iterator");
               error.iteratorNotHandled = true;
               throw error;
@@ -6010,25 +6121,25 @@ var Encoder2 = class extends Decoder2 {
           }
         }
       } else if (type === "boolean") {
-        target2[position4++] = value ? 245 : 244;
+        target[position2++] = value ? 245 : 244;
       } else if (type === "bigint") {
         if (value < BigInt(1) << BigInt(64) && value >= 0) {
-          target2[position4++] = 27;
-          targetView2.setBigUint64(position4, value);
+          target[position2++] = 27;
+          targetView.setBigUint64(position2, value);
         } else if (value > -(BigInt(1) << BigInt(64)) && value < 0) {
-          target2[position4++] = 59;
-          targetView2.setBigUint64(position4, -value - BigInt(1));
+          target[position2++] = 59;
+          targetView.setBigUint64(position2, -value - BigInt(1));
         } else {
           if (this.largeBigIntToFloat) {
-            target2[position4++] = 251;
-            targetView2.setFloat64(position4, Number(value));
+            target[position2++] = 251;
+            targetView.setFloat64(position2, Number(value));
           } else {
             throw new RangeError(value + " was too large to fit in CBOR 64-bit integer format, set largeBigIntToFloat to convert to float-64");
           }
         }
-        position4 += 8;
+        position2 += 8;
       } else if (type === "undefined") {
-        target2[position4++] = 247;
+        target[position2++] = 247;
       } else {
         throw new Error("Unknown type: " + type);
       }
@@ -6038,18 +6149,18 @@ var Encoder2 = class extends Decoder2 {
       let vals = Object.values(object);
       let length = keys.length;
       if (length < 24) {
-        target2[position4++] = 160 | length;
+        target[position2++] = 160 | length;
       } else if (length < 256) {
-        target2[position4++] = 184;
-        target2[position4++] = length;
+        target[position2++] = 184;
+        target[position2++] = length;
       } else if (length < 65536) {
-        target2[position4++] = 185;
-        target2[position4++] = length >> 8;
-        target2[position4++] = length & 255;
+        target[position2++] = 185;
+        target[position2++] = length >> 8;
+        target[position2++] = length & 255;
       } else {
-        target2[position4++] = 186;
-        targetView2.setUint32(position4, length);
-        position4 += 4;
+        target[position2++] = 186;
+        targetView.setUint32(position2, length);
+        position2 += 4;
       }
       let key;
       if (encoder.keyMap) {
@@ -6064,9 +6175,9 @@ var Encoder2 = class extends Decoder2 {
         }
       }
     } : (object, safePrototype) => {
-      target2[position4++] = 185;
-      let objectOffset = position4 - start;
-      position4 += 2;
+      target[position2++] = 185;
+      let objectOffset = position2 - start;
+      position2 += 2;
       let size = 0;
       if (encoder.keyMap) {
         for (let key in object)
@@ -6083,8 +6194,8 @@ var Encoder2 = class extends Decoder2 {
             size++;
           }
       }
-      target2[objectOffset++ + start] = size >> 8;
-      target2[objectOffset + start] = size & 255;
+      target[objectOffset++ + start] = size >> 8;
+      target[objectOffset + start] = size & 255;
     } : (object, safePrototype) => {
       let nextTransition, transition = structures.transitions || (structures.transitions = /* @__PURE__ */ Object.create(null));
       let newTransitions = 0;
@@ -6108,8 +6219,8 @@ var Encoder2 = class extends Decoder2 {
           if (safePrototype || object.hasOwnProperty(key)) {
             nextTransition = transition[key];
             if (!nextTransition) {
-              if (transition[RECORD_SYMBOL2] & 1048576) {
-                parentRecordId = transition[RECORD_SYMBOL2] & 65535;
+              if (transition[RECORD_SYMBOL] & 1048576) {
+                parentRecordId = transition[RECORD_SYMBOL] & 65535;
               }
               nextTransition = transition[key] = /* @__PURE__ */ Object.create(null);
               newTransitions++;
@@ -6118,12 +6229,12 @@ var Encoder2 = class extends Decoder2 {
             length++;
           }
       }
-      let recordId = transition[RECORD_SYMBOL2];
+      let recordId = transition[RECORD_SYMBOL];
       if (recordId !== void 0) {
         recordId &= 65535;
-        target2[position4++] = 217;
-        target2[position4++] = recordId >> 8 | 224;
-        target2[position4++] = recordId & 255;
+        target[position2++] = 217;
+        target[position2++] = recordId >> 8 | 224;
+        target[position2++] = recordId & 255;
       } else {
         if (!keys)
           keys = transition.__keys__ || (transition.__keys__ = Object.keys(object));
@@ -6133,7 +6244,7 @@ var Encoder2 = class extends Decoder2 {
             recordId = 0;
             structures.nextId = 1;
           }
-          if (recordId >= MAX_STRUCTURES2) {
+          if (recordId >= MAX_STRUCTURES) {
             structures.nextId = (recordId = maxSharedStructures) + 1;
           }
         } else {
@@ -6141,27 +6252,27 @@ var Encoder2 = class extends Decoder2 {
         }
         structures[recordId] = keys;
         if (recordId < maxSharedStructures) {
-          target2[position4++] = 217;
-          target2[position4++] = recordId >> 8 | 224;
-          target2[position4++] = recordId & 255;
+          target[position2++] = 217;
+          target[position2++] = recordId >> 8 | 224;
+          target[position2++] = recordId & 255;
           transition = structures.transitions;
           for (let i = 0; i < length; i++) {
-            if (transition[RECORD_SYMBOL2] === void 0 || transition[RECORD_SYMBOL2] & 1048576)
-              transition[RECORD_SYMBOL2] = recordId;
+            if (transition[RECORD_SYMBOL] === void 0 || transition[RECORD_SYMBOL] & 1048576)
+              transition[RECORD_SYMBOL] = recordId;
             transition = transition[keys[i]];
           }
-          transition[RECORD_SYMBOL2] = recordId | 1048576;
+          transition[RECORD_SYMBOL] = recordId | 1048576;
           hasSharedUpdate = true;
         } else {
-          transition[RECORD_SYMBOL2] = recordId;
-          targetView2.setUint32(position4, 3655335680);
-          position4 += 3;
+          transition[RECORD_SYMBOL] = recordId;
+          targetView.setUint32(position2, 3655335680);
+          position2 += 3;
           if (newTransitions)
             transitionsCount += serializationsSinceTransitionRebuild * newTransitions;
-          if (recordIdsToRemove.length >= MAX_STRUCTURES2 - maxSharedStructures)
-            recordIdsToRemove.shift()[RECORD_SYMBOL2] = void 0;
+          if (recordIdsToRemove.length >= MAX_STRUCTURES - maxSharedStructures)
+            recordIdsToRemove.shift()[RECORD_SYMBOL] = void 0;
           recordIdsToRemove.push(transition);
-          writeArrayHeader2(length + 2);
+          writeArrayHeader(length + 2);
           encode3(57344 + recordId);
           encode3(keys);
           if (safePrototype === null)
@@ -6173,9 +6284,9 @@ var Encoder2 = class extends Decoder2 {
         }
       }
       if (length < 24) {
-        target2[position4++] = 128 | length;
+        target[position2++] = 128 | length;
       } else {
-        writeArrayHeader2(length);
+        writeArrayHeader(length);
       }
       if (safePrototype === null)
         return;
@@ -6186,21 +6297,21 @@ var Encoder2 = class extends Decoder2 {
     const makeRoom = (end) => {
       let newSize;
       if (end > 16777216) {
-        if (end - start > MAX_BUFFER_SIZE2)
+        if (end - start > MAX_BUFFER_SIZE)
           throw new Error("Encoded buffer would be larger than maximum buffer size");
-        newSize = Math.min(MAX_BUFFER_SIZE2, Math.round(Math.max((end - start) * (end > 67108864 ? 1.25 : 2), 4194304) / 4096) * 4096);
+        newSize = Math.min(MAX_BUFFER_SIZE, Math.round(Math.max((end - start) * (end > 67108864 ? 1.25 : 2), 4194304) / 4096) * 4096);
       } else
-        newSize = (Math.max(end - start << 2, target2.length - 1) >> 12) + 1 << 12;
-      let newBuffer = new ByteArrayAllocate2(newSize);
-      targetView2 = new DataView(newBuffer.buffer, 0, newSize);
-      if (target2.copy)
-        target2.copy(newBuffer, 0, start, end);
+        newSize = (Math.max(end - start << 2, target.length - 1) >> 12) + 1 << 12;
+      let newBuffer = new ByteArrayAllocate(newSize);
+      targetView = new DataView(newBuffer.buffer, 0, newSize);
+      if (target.copy)
+        target.copy(newBuffer, 0, start, end);
       else
-        newBuffer.set(target2.slice(start, end));
-      position4 -= start;
+        newBuffer.set(target.slice(start, end));
+      position2 -= start;
       start = 0;
-      safeEnd2 = newBuffer.length - 10;
-      return target2 = newBuffer;
+      safeEnd = newBuffer.length - 10;
+      return target = newBuffer;
     };
     let chunkThreshold = 100;
     let continuedChunkThreshold = 1e3;
@@ -6217,7 +6328,7 @@ var Encoder2 = class extends Decoder2 {
         if (useRecords)
           writeObject(object, null);
         else
-          writeEntityLength2(Object.keys(object).length, 160);
+          writeEntityLength(Object.keys(object).length, 160);
         for (let key in object) {
           let value = object[key];
           if (!useRecords)
@@ -6232,10 +6343,10 @@ var Encoder2 = class extends Decoder2 {
         }
       } else if (constructor === Array) {
         let length = object.length;
-        writeArrayHeader2(length);
+        writeArrayHeader(length);
         for (let i = 0; i < length; i++) {
           let value = object[i];
-          if (value && (typeof value === "object" || position4 - start > chunkThreshold)) {
+          if (value && (typeof value === "object" || position2 - start > chunkThreshold)) {
             if (iterateProperties.element)
               yield* encodeObjectAsIterable(value, iterateProperties.element);
             else
@@ -6244,9 +6355,9 @@ var Encoder2 = class extends Decoder2 {
             encode3(value);
         }
       } else if (object[Symbol.iterator]) {
-        target2[position4++] = 159;
+        target[position2++] = 159;
         for (let value of object) {
-          if (value && (typeof value === "object" || position4 - start > chunkThreshold)) {
+          if (value && (typeof value === "object" || position2 - start > chunkThreshold)) {
             if (iterateProperties.element)
               yield* encodeObjectAsIterable(value, iterateProperties.element);
             else
@@ -6254,40 +6365,40 @@ var Encoder2 = class extends Decoder2 {
           } else
             encode3(value);
         }
-        target2[position4++] = 255;
-      } else if (isBlob2(object)) {
-        writeEntityLength2(object.size, 64);
-        yield target2.subarray(start, position4);
+        target[position2++] = 255;
+      } else if (isBlob(object)) {
+        writeEntityLength(object.size, 64);
+        yield target.subarray(start, position2);
         yield object;
         restartEncoding();
       } else if (object[Symbol.asyncIterator]) {
-        target2[position4++] = 159;
-        yield target2.subarray(start, position4);
+        target[position2++] = 159;
+        yield target.subarray(start, position2);
         yield object;
         restartEncoding();
-        target2[position4++] = 255;
+        target[position2++] = 255;
       } else {
         encode3(object);
       }
-      if (finalIterable && position4 > start)
-        yield target2.subarray(start, position4);
-      else if (position4 - start > chunkThreshold) {
-        yield target2.subarray(start, position4);
+      if (finalIterable && position2 > start)
+        yield target.subarray(start, position2);
+      else if (position2 - start > chunkThreshold) {
+        yield target.subarray(start, position2);
         restartEncoding();
       }
     }
     function* tryEncode(value, iterateProperties, key) {
-      let restart = position4 - start;
+      let restart = position2 - start;
       try {
         encode3(value);
-        if (position4 - start > chunkThreshold) {
-          yield target2.subarray(start, position4);
+        if (position2 - start > chunkThreshold) {
+          yield target.subarray(start, position2);
           restartEncoding();
         }
       } catch (error) {
         if (error.iteratorNotHandled) {
           iterateProperties[key] = {};
-          position4 = start + restart;
+          position2 = start + restart;
           yield* encodeObjectAsIterable.call(this, value, iterateProperties[key]);
         } else
           throw error;
@@ -6295,7 +6406,7 @@ var Encoder2 = class extends Decoder2 {
     }
     function restartEncoding() {
       chunkThreshold = continuedChunkThreshold;
-      encoder.encode(null, THROW_ON_ITERABLE2);
+      encoder.encode(null, THROW_ON_ITERABLE);
     }
     function startEncoding(value, options2, encodeIterable) {
       if (options2 && options2.chunkThreshold)
@@ -6303,7 +6414,7 @@ var Encoder2 = class extends Decoder2 {
       else
         chunkThreshold = 100;
       if (value && typeof value === "object") {
-        encoder.encode(null, THROW_ON_ITERABLE2);
+        encoder.encode(null, THROW_ON_ITERABLE);
         return encodeIterable(value, encoder.iterateProperties || (encoder.iterateProperties = {}), true);
       }
       return [encoder.encode(value)];
@@ -6311,9 +6422,9 @@ var Encoder2 = class extends Decoder2 {
     async function* encodeObjectAsAsyncIterable(value, iterateProperties) {
       for (let encodedValue of encodeObjectAsIterable(value, iterateProperties, true)) {
         let constructor = encodedValue.constructor;
-        if (constructor === ByteArray2 || constructor === Uint8Array)
+        if (constructor === ByteArray || constructor === Uint8Array)
           yield encodedValue;
-        else if (isBlob2(encodedValue)) {
+        else if (isBlob(encodedValue)) {
           let reader = encodedValue.stream().getReader();
           let next;
           while (!(next = await reader.read()).done) {
@@ -6334,9 +6445,9 @@ var Encoder2 = class extends Decoder2 {
     }
   }
   useBuffer(buffer) {
-    target2 = buffer;
-    targetView2 = new DataView(target2.buffer, target2.byteOffset, target2.byteLength);
-    position4 = 0;
+    target = buffer;
+    targetView = new DataView(target.buffer, target.byteOffset, target.byteLength);
+    position2 = 0;
   }
   clearSharedData() {
     if (this.structures)
@@ -6348,7 +6459,7 @@ var Encoder2 = class extends Decoder2 {
     let lastVersion = this.sharedVersion || 0;
     this.sharedVersion = lastVersion + 1;
     let structuresCopy = this.structures.slice(0);
-    let sharedData = new SharedData2(structuresCopy, this.sharedValues, this.sharedVersion);
+    let sharedData = new SharedData(structuresCopy, this.sharedValues, this.sharedVersion);
     let saveResults = this.saveShared(sharedData, (existingShared) => (existingShared && existingShared.version || 0) == lastVersion);
     if (saveResults === false) {
       sharedData = this.getShared() || {};
@@ -6362,74 +6473,74 @@ var Encoder2 = class extends Decoder2 {
     return saveResults;
   }
 };
-function writeEntityLength2(length, majorValue) {
+function writeEntityLength(length, majorValue) {
   if (length < 24)
-    target2[position4++] = majorValue | length;
+    target[position2++] = majorValue | length;
   else if (length < 256) {
-    target2[position4++] = majorValue | 24;
-    target2[position4++] = length;
+    target[position2++] = majorValue | 24;
+    target[position2++] = length;
   } else if (length < 65536) {
-    target2[position4++] = majorValue | 25;
-    target2[position4++] = length >> 8;
-    target2[position4++] = length & 255;
+    target[position2++] = majorValue | 25;
+    target[position2++] = length >> 8;
+    target[position2++] = length & 255;
   } else {
-    target2[position4++] = majorValue | 26;
-    targetView2.setUint32(position4, length);
-    position4 += 4;
+    target[position2++] = majorValue | 26;
+    targetView.setUint32(position2, length);
+    position2 += 4;
   }
 }
-var SharedData2 = class {
+var SharedData = class {
   constructor(structures, values, version) {
     this.structures = structures;
     this.packedValues = values;
     this.version = version;
   }
 };
-function writeArrayHeader2(length) {
+function writeArrayHeader(length) {
   if (length < 24)
-    target2[position4++] = 128 | length;
+    target[position2++] = 128 | length;
   else if (length < 256) {
-    target2[position4++] = 152;
-    target2[position4++] = length;
+    target[position2++] = 152;
+    target[position2++] = length;
   } else if (length < 65536) {
-    target2[position4++] = 153;
-    target2[position4++] = length >> 8;
-    target2[position4++] = length & 255;
+    target[position2++] = 153;
+    target[position2++] = length >> 8;
+    target[position2++] = length & 255;
   } else {
-    target2[position4++] = 154;
-    targetView2.setUint32(position4, length);
-    position4 += 4;
+    target[position2++] = 154;
+    targetView.setUint32(position2, length);
+    position2 += 4;
   }
 }
-var BlobConstructor2 = typeof Blob === "undefined" ? function() {
+var BlobConstructor = typeof Blob === "undefined" ? function() {
 } : Blob;
-function isBlob2(object) {
-  if (object instanceof BlobConstructor2)
+function isBlob(object) {
+  if (object instanceof BlobConstructor)
     return true;
   let tag = object[Symbol.toStringTag];
   return tag === "Blob" || tag === "File";
 }
-function findRepetitiveStrings2(value, packedValues3) {
+function findRepetitiveStrings(value, packedValues2) {
   switch (typeof value) {
     case "string":
       if (value.length > 3) {
-        if (packedValues3.objectMap[value] > -1 || packedValues3.values.length >= packedValues3.maxValues)
+        if (packedValues2.objectMap[value] > -1 || packedValues2.values.length >= packedValues2.maxValues)
           return;
-        let packedStatus = packedValues3.get(value);
+        let packedStatus = packedValues2.get(value);
         if (packedStatus) {
           if (++packedStatus.count == 2) {
-            packedValues3.values.push(value);
+            packedValues2.values.push(value);
           }
         } else {
-          packedValues3.set(value, {
+          packedValues2.set(value, {
             count: 1
           });
-          if (packedValues3.samplingPackedValues) {
-            let status = packedValues3.samplingPackedValues.get(value);
+          if (packedValues2.samplingPackedValues) {
+            let status = packedValues2.samplingPackedValues.get(value);
             if (status)
               status.count++;
             else
-              packedValues3.samplingPackedValues.set(value, {
+              packedValues2.samplingPackedValues.set(value, {
                 count: 1
               });
           }
@@ -6440,15 +6551,15 @@ function findRepetitiveStrings2(value, packedValues3) {
       if (value) {
         if (value instanceof Array) {
           for (let i = 0, l = value.length; i < l; i++) {
-            findRepetitiveStrings2(value[i], packedValues3);
+            findRepetitiveStrings(value[i], packedValues2);
           }
         } else {
-          let includeKeys = !packedValues3.encoder.useRecords;
+          let includeKeys = !packedValues2.encoder.useRecords;
           for (var key in value) {
             if (value.hasOwnProperty(key)) {
               if (includeKeys)
-                findRepetitiveStrings2(key, packedValues3);
-              findRepetitiveStrings2(value[key], packedValues3);
+                findRepetitiveStrings(key, packedValues2);
+              findRepetitiveStrings(value[key], packedValues2);
             }
           }
         }
@@ -6458,13 +6569,13 @@ function findRepetitiveStrings2(value, packedValues3) {
       console.log(value);
   }
 }
-var isLittleEndianMachine4 = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
-extensionClasses2 = [
+var isLittleEndianMachine2 = new Uint8Array(new Uint16Array([1]).buffer)[0] == 1;
+extensionClasses = [
   Date,
   Set,
   Error,
   RegExp,
-  Tag2,
+  Tag,
   ArrayBuffer,
   Uint8Array,
   Uint8ClampedArray,
@@ -6479,21 +6590,21 @@ extensionClasses2 = [
   } : BigInt64Array,
   Float32Array,
   Float64Array,
-  SharedData2
+  SharedData
 ];
-extensions2 = [
+extensions = [
   {
     tag: 1,
     encode(date, encode3) {
       let seconds = date.getTime() / 1e3;
       if ((this.useTimestamp32 || date.getMilliseconds() === 0) && seconds >= 0 && seconds < 4294967296) {
-        target2[position4++] = 26;
-        targetView2.setUint32(position4, seconds);
-        position4 += 4;
+        target[position2++] = 26;
+        targetView.setUint32(position2, seconds);
+        position2 += 4;
       } else {
-        target2[position4++] = 251;
-        targetView2.setFloat64(position4, seconds);
-        position4 += 8;
+        target[position2++] = 251;
+        targetView.setFloat64(position2, seconds);
+        position2 += 8;
       }
     }
   },
@@ -6526,61 +6637,61 @@ extensions2 = [
   },
   {
     encode(arrayBuffer, encode3, makeRoom) {
-      writeBuffer2(arrayBuffer, makeRoom);
+      writeBuffer(arrayBuffer, makeRoom);
     }
   },
   {
     getTag(typedArray) {
       if (typedArray.constructor === Uint8Array) {
-        if (this.tagUint8Array || hasNodeBuffer2 && this.tagUint8Array !== false)
+        if (this.tagUint8Array || hasNodeBuffer && this.tagUint8Array !== false)
           return 64;
       }
     },
     encode(typedArray, encode3, makeRoom) {
-      writeBuffer2(typedArray, makeRoom);
+      writeBuffer(typedArray, makeRoom);
     }
   },
-  typedArrayEncoder2(68, 1),
-  typedArrayEncoder2(69, 2),
-  typedArrayEncoder2(70, 4),
-  typedArrayEncoder2(71, 8),
-  typedArrayEncoder2(72, 1),
-  typedArrayEncoder2(77, 2),
-  typedArrayEncoder2(78, 4),
-  typedArrayEncoder2(79, 8),
-  typedArrayEncoder2(85, 4),
-  typedArrayEncoder2(86, 8),
+  typedArrayEncoder(68, 1),
+  typedArrayEncoder(69, 2),
+  typedArrayEncoder(70, 4),
+  typedArrayEncoder(71, 8),
+  typedArrayEncoder(72, 1),
+  typedArrayEncoder(77, 2),
+  typedArrayEncoder(78, 4),
+  typedArrayEncoder(79, 8),
+  typedArrayEncoder(85, 4),
+  typedArrayEncoder(86, 8),
   {
     encode(sharedData, encode3) {
-      let packedValues3 = sharedData.packedValues || [];
+      let packedValues2 = sharedData.packedValues || [];
       let sharedStructures = sharedData.structures || [];
-      if (packedValues3.values.length > 0) {
-        target2[position4++] = 216;
-        target2[position4++] = 51;
-        writeArrayHeader2(4);
-        let valuesArray = packedValues3.values;
+      if (packedValues2.values.length > 0) {
+        target[position2++] = 216;
+        target[position2++] = 51;
+        writeArrayHeader(4);
+        let valuesArray = packedValues2.values;
         encode3(valuesArray);
-        writeArrayHeader2(0);
-        writeArrayHeader2(0);
+        writeArrayHeader(0);
+        writeArrayHeader(0);
         packedObjectMap = Object.create(sharedPackedObjectMap || null);
         for (let i = 0, l = valuesArray.length; i < l; i++) {
           packedObjectMap[valuesArray[i]] = i;
         }
       }
       if (sharedStructures) {
-        targetView2.setUint32(position4, 3655335424);
-        position4 += 3;
+        targetView.setUint32(position2, 3655335424);
+        position2 += 3;
         let definitions = sharedStructures.slice(0);
         definitions.unshift(57344);
-        definitions.push(new Tag2(sharedData.version, 1399353956));
+        definitions.push(new Tag(sharedData.version, 1399353956));
         encode3(definitions);
       } else
-        encode3(new Tag2(sharedData.version, 1399353956));
+        encode3(new Tag(sharedData.version, 1399353956));
     }
   }
 ];
-function typedArrayEncoder2(tag, size) {
-  if (!isLittleEndianMachine4 && size > 1)
+function typedArrayEncoder(tag, size) {
+  if (!isLittleEndianMachine2 && size > 1)
     tag -= 4;
   return {
     tag,
@@ -6588,33 +6699,33 @@ function typedArrayEncoder2(tag, size) {
       let length = typedArray.byteLength;
       let offset = typedArray.byteOffset || 0;
       let buffer = typedArray.buffer || typedArray;
-      encode3(hasNodeBuffer2 ? Buffer3.from(buffer, offset, length) : new Uint8Array(buffer, offset, length));
+      encode3(hasNodeBuffer ? Buffer2.from(buffer, offset, length) : new Uint8Array(buffer, offset, length));
     }
   };
 }
-function writeBuffer2(buffer, makeRoom) {
+function writeBuffer(buffer, makeRoom) {
   let length = buffer.byteLength;
   if (length < 24) {
-    target2[position4++] = 64 + length;
+    target[position2++] = 64 + length;
   } else if (length < 256) {
-    target2[position4++] = 88;
-    target2[position4++] = length;
+    target[position2++] = 88;
+    target[position2++] = length;
   } else if (length < 65536) {
-    target2[position4++] = 89;
-    target2[position4++] = length >> 8;
-    target2[position4++] = length & 255;
+    target[position2++] = 89;
+    target[position2++] = length >> 8;
+    target[position2++] = length & 255;
   } else {
-    target2[position4++] = 90;
-    targetView2.setUint32(position4, length);
-    position4 += 4;
+    target[position2++] = 90;
+    targetView.setUint32(position2, length);
+    position2 += 4;
   }
-  if (position4 + length >= target2.length) {
-    makeRoom(position4 + length);
+  if (position2 + length >= target.length) {
+    makeRoom(position2 + length);
   }
-  target2.set(buffer.buffer ? buffer : new Uint8Array(buffer), position4);
-  position4 += length;
+  target.set(buffer.buffer ? buffer : new Uint8Array(buffer), position2);
+  position2 += length;
 }
-function insertIds2(serialized, idsToInsert) {
+function insertIds(serialized, idsToInsert) {
   let nextId;
   let distanceToMove = idsToInsert.length * 2;
   let lastEnd = serialized.length - distanceToMove;
@@ -6622,50 +6733,50 @@ function insertIds2(serialized, idsToInsert) {
   for (let id = 0; id < idsToInsert.length; id++) {
     let referee = idsToInsert[id];
     referee.id = id;
-    for (let position5 of referee.references) {
-      serialized[position5++] = id >> 8;
-      serialized[position5] = id & 255;
+    for (let position3 of referee.references) {
+      serialized[position3++] = id >> 8;
+      serialized[position3] = id & 255;
     }
   }
   while (nextId = idsToInsert.pop()) {
     let offset = nextId.offset;
     serialized.copyWithin(offset + distanceToMove, offset, lastEnd);
     distanceToMove -= 2;
-    let position5 = offset + distanceToMove;
-    serialized[position5++] = 216;
-    serialized[position5++] = 28;
+    let position3 = offset + distanceToMove;
+    serialized[position3++] = 216;
+    serialized[position3++] = 28;
     lastEnd = offset;
   }
   return serialized;
 }
-function writeBundles2(start, encode3) {
-  targetView2.setUint32(bundledStrings4.position + start, position4 - bundledStrings4.position - start + 1);
-  let writeStrings = bundledStrings4;
-  bundledStrings4 = null;
+function writeBundles(start, encode3) {
+  targetView.setUint32(bundledStrings2.position + start, position2 - bundledStrings2.position - start + 1);
+  let writeStrings = bundledStrings2;
+  bundledStrings2 = null;
   encode3(writeStrings[0]);
   encode3(writeStrings[1]);
 }
-function addExtension4(extension) {
+function addExtension2(extension) {
   if (extension.Class) {
     if (!extension.encode)
       throw new Error("Extension has no encode function");
-    extensionClasses2.unshift(extension.Class);
-    extensions2.unshift(extension);
+    extensionClasses.unshift(extension.Class);
+    extensions.unshift(extension);
   }
-  addExtension3(extension);
+  addExtension(extension);
 }
-var defaultEncoder2 = new Encoder2({ useRecords: false });
-var encode2 = defaultEncoder2.encode;
-var encodeAsIterable2 = defaultEncoder2.encodeAsIterable;
-var encodeAsAsyncIterable2 = defaultEncoder2.encodeAsAsyncIterable;
-var { NEVER: NEVER2, ALWAYS: ALWAYS2, DECIMAL_ROUND: DECIMAL_ROUND2, DECIMAL_FIT: DECIMAL_FIT2 } = FLOAT32_OPTIONS2;
-var REUSE_BUFFER_MODE2 = 512;
-var RESET_BUFFER_MODE2 = 1024;
-var THROW_ON_ITERABLE2 = 2048;
+var defaultEncoder = new Encoder({ useRecords: false });
+var encode2 = defaultEncoder.encode;
+var encodeAsIterable = defaultEncoder.encodeAsIterable;
+var encodeAsAsyncIterable = defaultEncoder.encodeAsAsyncIterable;
+var { NEVER, ALWAYS, DECIMAL_ROUND, DECIMAL_FIT } = FLOAT32_OPTIONS;
+var REUSE_BUFFER_MODE = 512;
+var RESET_BUFFER_MODE = 1024;
+var THROW_ON_ITERABLE = 2048;
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/cbor.js
+// node_modules/@progrium/duplex/esm/codec/cbor.js
 var CBORCodec = class {
-  constructor(debug3 = false, extensions3) {
+  constructor(debug3 = false, extensions2) {
     Object.defineProperty(this, "debug", {
       enumerable: true,
       configurable: true,
@@ -6673,8 +6784,8 @@ var CBORCodec = class {
       value: void 0
     });
     this.debug = debug3;
-    if (extensions3) {
-      extensions3.forEach(addExtension4);
+    if (extensions2) {
+      extensions2.forEach(addExtension2);
     }
   }
   encoder(w) {
@@ -6747,19 +6858,19 @@ var CBORDecoder = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/buffer.js
-function copy(src3, dst, off = 0) {
+// node_modules/@progrium/duplex/esm/buffer.js
+function copy(src2, dst, off = 0) {
   off = Math.max(0, Math.min(off, dst.byteLength));
   const dstBytesAvailable = dst.byteLength - off;
-  if (src3.byteLength > dstBytesAvailable) {
-    src3 = src3.subarray(0, dstBytesAvailable);
+  if (src2.byteLength > dstBytesAvailable) {
+    src2 = src2.subarray(0, dstBytesAvailable);
   }
-  dst.set(src3, off);
-  return src3.byteLength;
+  dst.set(src2, off);
+  return src2.byteLength;
 }
 var MIN_READ = 32 * 1024;
 var MAX_SIZE = 2 ** 32 - 2;
-var Buffer4 = class {
+var Buffer3 = class {
   constructor(ab) {
     Object.defineProperty(this, "_buf", {
       enumerable: true,
@@ -6952,7 +7063,7 @@ var Buffer4 = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/codec/frame.js
+// node_modules/@progrium/duplex/esm/codec/frame.js
 var FrameCodec = class {
   constructor(codec) {
     Object.defineProperty(this, "codec", {
@@ -6988,7 +7099,7 @@ var FrameEncoder = class {
     this.codec = codec;
   }
   async encode(v) {
-    const data = new Buffer4();
+    const data = new Buffer3();
     const enc = this.codec.encoder(data);
     await enc.encode(v);
     const lenPrefix = new DataView(new ArrayBuffer(4));
@@ -7031,7 +7142,7 @@ var FrameDecoder = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/client.js
+// node_modules/@progrium/duplex/esm/rpc/client.js
 var Client = class {
   constructor(session, codec) {
     Object.defineProperty(this, "session", {
@@ -7092,7 +7203,7 @@ function VirtualCaller(caller) {
   return pathBuilder("", caller.call.bind(caller));
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/handler.js
+// node_modules/@progrium/duplex/esm/rpc/handler.js
 function HandlerFunc(fn) {
   return { respondRPC: fn };
 }
@@ -7176,7 +7287,7 @@ var RespondMux = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/responder.js
+// node_modules/@progrium/duplex/esm/rpc/responder.js
 async function Respond(ch, codec, handler) {
   const framer = new FrameCodec(codec);
   const dec = framer.decoder(ch);
@@ -7251,9 +7362,9 @@ var responder = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/rpc/mod.js
+// node_modules/@progrium/duplex/esm/rpc/mod.js
 var Call = class {
-  constructor(selector, channel, decoder3) {
+  constructor(selector, channel, decoder2) {
     Object.defineProperty(this, "selector", {
       enumerable: true,
       configurable: true,
@@ -7280,7 +7391,7 @@ var Call = class {
     });
     this.selector = selector;
     this.channel = channel;
-    this.decoder = decoder3;
+    this.decoder = decoder2;
   }
   receive() {
     return this.decoder.decode();
@@ -7349,7 +7460,7 @@ var Response2 = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/fn/proxy.js
+// node_modules/@progrium/duplex/esm/fn/proxy.js
 function methodProxy(caller) {
   function pathBuilder(path, callable) {
     return new Proxy(Object.assign(() => {
@@ -7367,7 +7478,7 @@ function methodProxy(caller) {
   return pathBuilder("", caller.call.bind(caller));
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/peer/peer.js
+// node_modules/@progrium/duplex/esm/peer/peer.js
 var Peer = class {
   constructor(session, codec) {
     Object.defineProperty(this, "session", {
@@ -7429,7 +7540,7 @@ var Peer = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/message.js
+// node_modules/@progrium/duplex/esm/mux/codec/message.js
 var OpenID = 100;
 var OpenConfirmID = 101;
 var OpenFailureID = 102;
@@ -7447,8 +7558,8 @@ var payloadSizes = /* @__PURE__ */ new Map([
   [CloseID, 4]
 ]);
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/encoder.js
-var Encoder3 = class {
+// node_modules/@progrium/duplex/esm/mux/codec/encoder.js
+var Encoder2 = class {
   constructor(w) {
     Object.defineProperty(this, "w", {
       enumerable: true,
@@ -7536,7 +7647,7 @@ function Marshal(obj) {
   throw `marshal of unknown type: ${obj}`;
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/util.js
+// node_modules/@progrium/duplex/esm/mux/util.js
 function concat(list, totalLength) {
   const buf = new Uint8Array(totalLength);
   let offset = 0;
@@ -7682,8 +7793,8 @@ var ReadBuffer = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/decoder.js
-var Decoder3 = class {
+// node_modules/@progrium/duplex/esm/mux/codec/decoder.js
+var Decoder2 = class {
   constructor(r) {
     Object.defineProperty(this, "r", {
       enumerable: true,
@@ -7795,13 +7906,13 @@ function Unmarshal(packet) {
   }
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/codec/mod.js
+// node_modules/@progrium/duplex/esm/mux/codec/mod.js
 var debug2 = {
   messages: false,
   bytes: false
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/session/session.js
+// node_modules/@progrium/duplex/esm/mux/session/session.js
 var minPacketLength = 9;
 var maxPacketLength = Number.MAX_VALUE;
 var Session = class {
@@ -7849,8 +7960,8 @@ var Session = class {
       value: void 0
     });
     this.conn = conn;
-    this.enc = new Encoder3(conn);
-    this.dec = new Decoder3(conn);
+    this.enc = new Encoder2(conn);
+    this.dec = new Decoder2(conn);
     this.channels = [];
     this.incoming = new queue();
     this.done = this.loop();
@@ -7965,7 +8076,7 @@ var Session = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/mux/session/channel.js
+// node_modules/@progrium/duplex/esm/mux/session/channel.js
 var channelMaxPacket = 1 << 24;
 var channelWindowSize = 64 * channelMaxPacket;
 var Channel = class {
@@ -8214,7 +8325,7 @@ var Channel = class {
   }
 };
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/_dnt.shims.js
+// node_modules/@progrium/duplex/esm/_dnt.shims.js
 var import_ws = __toESM(require_browser(), 1);
 var import_ws2 = __toESM(require_browser(), 1);
 var dntGlobals = {
@@ -8275,7 +8386,7 @@ function createMergeProxy(baseObj, extObj) {
   });
 }
 
-// ../wanix-ferrule-stdio/node_modules/@progrium/duplex/esm/transport/messageport.js
+// node_modules/@progrium/duplex/esm/transport/messageport.js
 var Conn = class {
   constructor(port) {
     Object.defineProperty(this, "port", {
@@ -8369,6 +8480,7 @@ var FilesystemResultProtocolError = class extends Error {
   }
 };
 var filesystemCodes = /* @__PURE__ */ new Set([
+  "EBADF",
   "ENOENT",
   "EACCES",
   "EPERM",
@@ -8554,6 +8666,9 @@ var WanixHandle2 = class {
     this.logger(`sync ${fd}`);
     return (await this.peer.call("Sync", [fd])).value;
   }
+  async fstatResult(fd) {
+    return validateResult((await this.peer.call("FstatResult", [fd])).value, validStat);
+  }
   async fstat(fd) {
     this.logger(`fstat ${fd}`);
     return (await this.peer.call("Fstat", [fd])).value;
@@ -8605,13 +8720,13 @@ var WanixHandle2 = class {
     return this.writable(fd);
   }
   writable(fd) {
-    const self = this;
+    const self2 = this;
     let closed = false;
     let closing;
     const closeFD = () => {
       if (!closing) {
         closed = true;
-        closing = Promise.resolve().then(() => self.close(fd));
+        closing = Promise.resolve().then(() => self2.close(fd));
       }
       return closing;
     };
@@ -8620,26 +8735,26 @@ var WanixHandle2 = class {
         if (closed) {
           throw new TypeError("write to closed Wanix stream");
         }
-        return self.write(fd, chunk);
+        return self2.write(fd, chunk);
       },
       close: closeFD,
       abort: closeFD
     });
   }
   readable(fd) {
-    const self = this;
+    const self2 = this;
     let closed = false;
     let closing;
     const closeFD = () => {
       if (!closing) {
         closed = true;
-        closing = Promise.resolve().then(() => self.close(fd));
+        closing = Promise.resolve().then(() => self2.close(fd));
       }
       return closing;
     };
     return new ReadableStream({
       async pull(controller) {
-        const data = await self.read(fd, 1024);
+        const data = await self2.read(fd, 1024);
         if (closed) return;
         if (data === null) {
           await closeFD();

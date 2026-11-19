@@ -35,5 +35,19 @@ export function fdStatSize(guestFD, openFiles, streams, caller, syntheticStdin) 
     const handle = description ? description.handle : streams[guestFD];
     if (!handle) return -9;
     if (!validBackendFD(handle.fd)) return -5;
-    return caller.call("fd_stat_size", {fd:handle.fd});
+    return fdSizeReply(caller.call("fd_stat_size", {fd:handle.fd}));
+}
+
+// Canonical code->errno map shared with worker.js; mirrors api filesystemCode.
+export const filesystemErrnos = Object.freeze({EPERM: 1, ENOENT: 2, EIO: 5, EBADF: 9, EACCES: 13,
+    EEXIST: 17, ENOTDIR: 20, EISDIR: 21, EINVAL: 22, ENAMETOOLONG: 36, ENOSYS: 38, ELOOP: 40, EOVERFLOW: 75});
+export function fstatBrokerResult(result) {
+    if (result?.OK === false && !Object.hasOwn(result,"Value") && result.Error && Object.hasOwn(filesystemErrnos,result.Error.Code)) return {ok:false,errno:filesystemErrnos[result.Error.Code]};
+    if (result?.OK === true && !Object.hasOwn(result,"Error") && result.Value) return {ok:true,size:exactStatSize(result.Value)};
+    return {ok:false,errno:5};
+}
+export function fdSizeReply(reply) {
+    if (reply?.ok === false && !Object.hasOwn(reply,"size") && Number.isInteger(reply.errno) && Object.values(filesystemErrnos).includes(reply.errno)) return -reply.errno;
+    if (reply?.ok === true && !Object.hasOwn(reply,"errno") && typeof reply.size === "number" && Number.isSafeInteger(reply.size) && reply.size >= 0) return reply.size;
+    return -5;
 }
