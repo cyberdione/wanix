@@ -30,6 +30,8 @@ func filesystemCode(err error) string {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		switch errno {
+		case syscall.ENOSYS:
+			return "ENOSYS"
 		case syscall.ENOENT:
 			return "ENOENT"
 		case syscall.EACCES:
@@ -48,6 +50,8 @@ func filesystemCode(err error) string {
 			return "ELOOP"
 		case syscall.ENAMETOOLONG:
 			return "ENAMETOOLONG"
+		case syscall.EOVERFLOW:
+			return "EOVERFLOW"
 		case syscall.EIO:
 			return "EIO"
 		default:
