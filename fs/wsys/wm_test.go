@@ -213,6 +213,12 @@ func TestWctlDeleteFailsParkedReaders(t *testing.T) {
 	if _, err := d.Stat(id + "/label"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("stat after delete = %v", err)
 	}
+	// writes fail closed too — there are no parked writes (queues reject
+	// immediately), so a task's cons output after the delete gets the
+	// closed-pipe error the worker's write boundary maps to EIO
+	if _, err := fs.Write(cf, []byte("late")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("cons write after delete = %v, want closed pipe", err)
+	}
 	list := listingJSON(t, d)
 	// only the deleter's own slot remains
 	if len(list.Windows) != 1 || list.Windows[0].ID != 2 {
