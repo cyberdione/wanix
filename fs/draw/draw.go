@@ -14,7 +14,7 @@
 // newer-generation 4-byte screen id suffix on 'v' (_isnewdisplay) is not
 // served.
 //
-// Supported data-file opcodes: A b c d f F N n O r v y.
+// Supported data-file opcodes: A b c d f F i l N n O r s v x y.
 // All other opcodes are rejected with an explicit error.
 //
 // Explicit limitations of this slice:
@@ -30,10 +30,15 @@
 //   - 'b' with a screen id allocates a plain image (no layer/window
 //     compositing); refresh methods are recorded but produce no notifications.
 //   - refresh file reads return EOF when empty instead of blocking.
+//   - Strings ('s'/'x') draw from a font cache image initialized by 'i'
+//     and loaded glyph-by-glyph by 'l'; this is the whole 4th-edition
+//     default-font path (libdraw getdefont allocates the subfont bits with
+//     'b'+'y', buildfont allocates the cache with 'b' and 'i', loadchar
+//     sends 'l' per glyph), so no font file service exists in the device.
 //   - Screens ('A'/'F') are bookkeeping only; there is no window manager.
-//   - No font cache ('i'/'l'), shapes ('e' 'E' 'L' 'p' 'P'), strings
-//     ('s' 'x'), compressed loads ('Y'), origin ('o'), top/bottom ('t'),
-//     public screen attach ('S'), or debug toggle ('D').
+//   - No shapes ('e' 'E' 'L' 'p' 'P'), compressed loads ('Y'), origin
+//     ('o'), top/bottom ('t'), public screen attach ('S'), or debug
+//     toggle ('D').
 package draw
 
 import (
@@ -75,6 +80,8 @@ var (
 	ErrWrongName    = fmt.Errorf("wrong name for image")
 	ErrScreenExists = fmt.Errorf("screen id in use")
 	ErrNoClient     = fmt.Errorf("unknown draw client")
+	ErrNotFont      = fmt.Errorf("image not a font")
+	ErrIndex        = fmt.Errorf("character index out of range")
 	ErrSaturated    = fmt.Errorf("draw: resource limit reached")
 )
 

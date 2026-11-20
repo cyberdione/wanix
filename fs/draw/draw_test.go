@@ -214,9 +214,6 @@ func TestMalformedAndUnsupported(t *testing.T) {
 	if _, err := fs.Write(data, msg(byte('D'), byte(1))); err == nil {
 		t.Fatal("unsupported opcode D accepted")
 	}
-	if _, err := fs.Write(data, msg(byte('s'))); err == nil {
-		t.Fatal("unsupported opcode s accepted")
-	}
 	// truncated 'b' (50 of 51 bytes) buffers; then a garbage completion fails
 	m := msg(byte('b'), uint32(1), uint32(0), byte(0), uint32(ChanGREY8), byte(0),
 		rect{0, 0, 4, 4}, rect{0, 0, 4, 4}, uint32(DWhite))
@@ -923,5 +920,228 @@ func TestCompositeSrcIsDst(t *testing.T) {
 		if string(buf[i:i+3]) != string(w) {
 			t.Fatalf("pixel %v = %x, want %x", p, buf[i:i+3], w)
 		}
+	}
+}
+
+// stringTestFont builds the wire sequence of the pinned default-font path
+// (getdefont's 'b'+'y' for subfont bits, buildfont's 'b' cache image and
+// 'i', loadchar's 'l' per glyph): a k8 font with two 1x1 glyphs whose mask
+// greys are grey0 and grey1, both advancing one pixel.
+func stringTestFont(t *testing.T, data fs.File, cacheID, bitsID uint32, grey0, grey1 byte) {
+	t.Helper()
+	// subfont bits: 'b' + 'y' (getdefont)
+	wr(t, data, msg(byte('b'), bitsID, uint32(0), byte(0), uint32(ChanGREY8), byte(0),
+		rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(0)))
+	wr(t, data, msg(byte('y'), bitsID, rect{0, 0, 2, 1}, []byte{grey0, grey1}))
+	// cache image + font init ('b' + 'i', buildfont/fontresize)
+	wr(t, data, msg(byte('b'), cacheID, uint32(0), byte(0), uint32(ChanGREY8), byte(0),
+		rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(0)))
+	wr(t, data, msg(byte('i'), cacheID, uint32(2), byte(1)))
+	// load both glyphs ('l', loadchar)
+	wr(t, data, msg(byte('l'), cacheID, bitsID, uint16(0), rect{0, 0, 1, 1}, pt{0, 0}, byte(0), byte(1)))
+	wr(t, data, msg(byte('l'), cacheID, bitsID, uint16(1), rect{1, 0, 2, 1}, pt{1, 0}, byte(0), byte(1)))
+}
+
+// TestStringK8Font: white text through a k8 font; glyph 0 has full opacity
+// (mask 0xff) and glyph 1 half (0x80): SoverD onto black gives 0xff and
+// MUL(128,255) = 0x80.
+func TestStringK8Font(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	stringTestFont(t, data, 4, 5, 0xFF, 0x80)
+	allocOpaque(t, data, 7, ChanGREY1, DWhite)
+	wr(t, data, msg(byte('b'), uint32(6), uint32(0), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(DBlack)))
+	wr(t, data, msg(byte('s'), uint32(6), uint32(7), uint32(4),
+		pt{0, 1}, rect{0, 0, 2, 1}, pt{0, 0}, uint16(2), []byte{0, 0, 1, 0}))
+	wr(t, data, msg(byte('r'), uint32(6), rect{0, 0, 2, 1}))
+	buf := make([]byte, 6)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf[0] != 0xFF || buf[1] != 0xFF || buf[2] != 0xFF {
+		t.Fatalf("glyph 0 = %x, want ff ff ff", buf[0:3])
+	}
+	if buf[3] != 0x80 || buf[4] != 0x80 || buf[5] != 0x80 {
+		t.Fatalf("glyph 1 = %x, want 80 80 80", buf[3:6])
+	}
+}
+
+// TestStringK1FontPlacement: a k1 glyph with left=-1 and the pen at the
+// baseline (p.y=1, ascent=1) paints its bits starting one pixel left of
+// and one row above the pen.
+func TestStringK1FontPlacement(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	// subfont bits 2x2 k1: rows 10, 11 (bits within a byte are big-endian,
+	// leftmost pixel is the high bit)
+	wr(t, data, msg(byte('b'), uint32(5), uint32(0), byte(0), uint32(ChanGREY1), byte(0),
+		rect{0, 0, 2, 2}, rect{0, 0, 2, 2}, uint32(0)))
+	wr(t, data, msg(byte('y'), uint32(5), rect{0, 0, 2, 2}, []byte{0x80, 0xC0}))
+	wr(t, data, msg(byte('b'), uint32(4), uint32(0), byte(0), uint32(ChanGREY1), byte(0),
+		rect{0, 0, 2, 2}, rect{0, 0, 2, 2}, uint32(0)))
+	wr(t, data, msg(byte('i'), uint32(4), uint32(1), byte(1)))
+	wr(t, data, msg(byte('l'), uint32(4), uint32(5), uint16(0), rect{0, 0, 2, 2}, pt{0, 0}, byte(0xFF), byte(3)))
+	allocOpaque(t, data, 7, ChanGREY1, DBlack)
+	wr(t, data, msg(byte('b'), uint32(6), uint32(0), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 4, 2}, rect{0, 0, 4, 2}, uint32(DWhite)))
+	wr(t, data, msg(byte('s'), uint32(6), uint32(7), uint32(4),
+		pt{1, 1}, rect{0, 0, 4, 2}, pt{0, 0}, uint16(1), []byte{0, 0}))
+	wr(t, data, msg(byte('r'), uint32(6), rect{0, 0, 4, 2}))
+	buf := make([]byte, 24)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	// glyph box (0,0)-(2,2); mask bits 1,0 / 1,1 over white dst with black src
+	want := []byte{
+		0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+		0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	}
+	if string(buf) != string(want) {
+		t.Fatalf("pixels = %x, want %x", buf, want)
+	}
+}
+
+// TestStringClipRect confines glyphs to the message clipr (which replaces
+// the destination clipr for the duration of the 's').
+func TestStringClipRect(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	wr(t, data, msg(byte('b'), uint32(5), uint32(0), byte(0), uint32(ChanGREY1), byte(0),
+		rect{0, 0, 2, 2}, rect{0, 0, 2, 2}, uint32(0)))
+	wr(t, data, msg(byte('y'), uint32(5), rect{0, 0, 2, 2}, []byte{0xC0, 0xC0}))
+	wr(t, data, msg(byte('b'), uint32(4), uint32(0), byte(0), uint32(ChanGREY1), byte(0),
+		rect{0, 0, 2, 2}, rect{0, 0, 2, 2}, uint32(0)))
+	wr(t, data, msg(byte('i'), uint32(4), uint32(1), byte(1)))
+	wr(t, data, msg(byte('l'), uint32(4), uint32(5), uint16(0), rect{0, 0, 2, 2}, pt{0, 0}, byte(0), byte(2)))
+	allocOpaque(t, data, 7, ChanGREY1, DBlack)
+	wr(t, data, msg(byte('b'), uint32(6), uint32(0), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 2, 2}, rect{0, 0, 2, 2}, uint32(DWhite)))
+	// clip to the right column only
+	wr(t, data, msg(byte('s'), uint32(6), uint32(7), uint32(4),
+		pt{0, 1}, rect{1, 0, 2, 2}, pt{0, 0}, uint16(1), []byte{0, 0}))
+	wr(t, data, msg(byte('r'), uint32(6), rect{0, 0, 2, 2}))
+	buf := make([]byte, 12)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte{
+		0xFF, 0xFF, 0xFF, 0, 0, 0,
+		0xFF, 0xFF, 0xFF, 0, 0, 0,
+	}
+	if string(buf) != string(want) {
+		t.Fatalf("pixels = %x, want %x", buf, want)
+	}
+}
+
+// TestStringBgPaint: 'x' paints the background under the full string extent
+// first (op SoverD, opaque), then the glyphs; glyph 1 composites white at
+// half opacity over the blue background: r=g=MUL(128,255)=0x80,
+// b=MUL(128,255)+MUL(127,255)=0xff.
+func TestStringBgPaint(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	stringTestFont(t, data, 4, 5, 0xFF, 0x80)
+	allocOpaque(t, data, 7, ChanGREY1, DWhite)
+	allocOpaque(t, data, 8, ChanRGB24, 0x0000FFFF) // blue
+	wr(t, data, msg(byte('b'), uint32(6), uint32(0), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(DBlack)))
+	wr(t, data, msg(byte('x'), uint32(6), uint32(7), uint32(4),
+		pt{0, 1}, rect{0, 0, 2, 1}, pt{0, 0}, uint16(2), uint32(8), pt{0, 0}, []byte{0, 0, 1, 0}))
+	wr(t, data, msg(byte('r'), uint32(6), rect{0, 0, 2, 1}))
+	buf := make([]byte, 6)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf[0] != 0xFF || buf[1] != 0xFF || buf[2] != 0xFF {
+		t.Fatalf("glyph 0 = %x, want ff ff ff", buf[0:3])
+	}
+	if buf[3] != 0xFF || buf[4] != 0x80 || buf[5] != 0x80 {
+		t.Fatalf("glyph 1 = %x, want b=ff g=80 r=80", buf[3:6])
+	}
+}
+
+// TestStringErrors covers devdraw's diagnostics for the font ops.
+func TestStringErrors(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	stringTestFont(t, data, 4, 5, 0xFF, 0xFF)
+	allocOpaque(t, data, 7, ChanGREY1, DWhite)
+	wr(t, data, msg(byte('b'), uint32(6), uint32(0), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(DBlack)))
+
+	// not a font
+	if _, err := fs.Write(data, msg(byte('s'), uint32(6), uint32(7), uint32(7),
+		pt{0, 1}, rect{0, 0, 2, 1}, pt{0, 0}, uint16(1), []byte{0, 0})); err == nil {
+		t.Fatal("string from non-font accepted")
+	}
+	// index out of range on 's': glyph 0 is drawn, then the error
+	if _, err := fs.Write(data, msg(byte('s'), uint32(6), uint32(7), uint32(4),
+		pt{0, 1}, rect{0, 0, 2, 1}, pt{0, 0}, uint16(2), []byte{0, 0, 2, 0})); err == nil {
+		t.Fatal("out-of-range cache index accepted")
+	}
+	wr(t, data, msg(byte('r'), uint32(6), rect{0, 0, 2, 1}))
+	buf := make([]byte, 6)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if buf[0] != 0xFF || buf[1] != 0xFF || buf[2] != 0xFF {
+		t.Fatalf("glyph before bad index = %x, want ff ff ff", buf[0:3])
+	}
+	// index out of range on 'x': nothing is drawn (bg validated first)
+	wr(t, data, msg(byte('f'), uint32(6)))
+	wr(t, data, msg(byte('b'), uint32(6), uint32(0), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(DBlack)))
+	allocOpaque(t, data, 8, ChanRGB24, 0x0000FFFF)
+	if _, err := fs.Write(data, msg(byte('x'), uint32(6), uint32(7), uint32(4),
+		pt{0, 1}, rect{0, 0, 2, 1}, pt{0, 0}, uint16(2), uint32(8), pt{0, 0}, []byte{0, 0, 2, 0})); err == nil {
+		t.Fatal("out-of-range cache index accepted on x")
+	}
+	wr(t, data, msg(byte('r'), uint32(6), rect{0, 0, 2, 1}))
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	for i, b := range buf {
+		if b != 0 {
+			t.Fatalf("pixel %d = %x after failed x, want untouched black", i, b)
+		}
+	}
+	// display image cannot be a font
+	if _, err := fs.Write(data, msg(byte('i'), uint32(0), uint32(1), byte(1))); err == nil {
+		t.Fatal("display as font accepted")
+	}
+	// font size bounds
+	if _, err := fs.Write(data, msg(byte('i'), uint32(6), uint32(0), byte(1))); err == nil {
+		t.Fatal("zero-char font accepted")
+	}
+	if _, err := fs.Write(data, msg(byte('i'), uint32(6), uint32(4097), byte(1))); err == nil {
+		t.Fatal("4097-char font accepted")
+	}
+	// 'l' with bad index
+	if _, err := fs.Write(data, msg(byte('l'), uint32(4), uint32(5), uint16(2),
+		rect{0, 0, 1, 1}, pt{0, 0}, byte(0), byte(1))); err == nil {
+		t.Fatal("'l' with out-of-range index accepted")
+	}
+	// 'i' on a window image
+	wr(t, data, msg(byte('A'), uint32(1), uint32(0), uint32(7), byte(0)))
+	wr(t, data, msg(byte('b'), uint32(9), uint32(1), byte(0), uint32(ChanRGB24), byte(0),
+		rect{0, 0, 4, 4}, rect{0, 0, 4, 4}, uint32(DBlack)))
+	if _, err := fs.Write(data, msg(byte('i'), uint32(9), uint32(1), byte(1))); err == nil {
+		t.Fatal("window as font accepted")
 	}
 }

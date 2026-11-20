@@ -142,6 +142,19 @@ type Image struct {
 	refresh byte
 	name    string // global name, if named via 'N'
 
+	// Font state, set by 'i' and 'l' (devdraw.c DImage fields).
+	ascent int
+	fchar  []FChar
+}
+
+// FChar is one font-cache character, as recorded by the 'l' opcode
+// (devdraw.c FChar): the glyph bits' bounding box in the font image plus
+// the baseline metrics.
+type FChar struct {
+	minx, maxx int // left/right edge of glyph bits in the font image
+	miny, maxy int // first scan line / last scan line + 1
+	left       int // offset of baseline (signed)
+	width      int // width of baseline (advance)
 }
 
 func newImage(id uint32, chanFmt uint32, repl bool, r, clipr image.Rectangle, color uint32) *Image {
@@ -527,4 +540,46 @@ func bgRect(b []byte) image.Rectangle {
 
 func bgPoint(b []byte) image.Point {
 	return image.Pt(int(int32(bgLong(b))), int(int32(bgLong(b[4:]))))
+}
+
+// drawString renders the cache indices from the font image through src onto
+// dst, following devdraw.c 's'/'x': each glyph is composited with the font
+// image as mask (drawChar); 'x' first paints the background image under the
+// full string extent (x from p.x to p.x+sum(width), y from the ascent line
+// spanning the font image height) with an opaque mask. The caller has
+// already swapped dst.clipr to the string clip rectangle.
+func drawString(dst, src, bg *Image, bgq image.Point, font *Image, p, sp image.Point, indices []byte, op int) error {
+	if bg != nil {
+		r := image.Rect(p.X, p.Y-font.ascent, p.X, p.Y-font.ascent+font.r.Dy())
+		for j := 0; j*2+1 < len(indices); j++ {
+			ci := int(binary.LittleEndian.Uint16(indices[2*j:]))
+			if ci >= len(font.fchar) {
+				return ErrIndex
+			}
+			r.Max.X += font.fchar[ci].width
+		}
+		composite(dst, bg, nil, r, bgq, bgq, op)
+	}
+	for j := 0; j*2+1 < len(indices); j++ {
+		ci := int(binary.LittleEndian.Uint16(indices[2*j:]))
+		if ci >= len(font.fchar) {
+			return ErrIndex
+		}
+		p, sp = drawChar(dst, src, p, sp, font, ci, op)
+	}
+	return nil
+}
+
+// drawChar composites one glyph (devdraw.c drawchar): the glyph rectangle
+// in dst is placed at the pen plus the left bearing, vertically at
+// baseline-ascent+miny, with the font image at (minx, miny) as mask and
+// the source at sp plus the same offsets; the pen and source point advance
+// by the character width.
+func drawChar(dst, src *Image, p, sp image.Point, font *Image, index int, op int) (image.Point, image.Point) {
+	fc := &font.fchar[index]
+	r := image.Rect(p.X+fc.left, p.Y-(font.ascent-fc.miny),
+		p.X+fc.left+(fc.maxx-fc.minx), p.Y-(font.ascent-fc.miny)+(fc.maxy-fc.miny))
+	sp1 := image.Pt(sp.X+fc.left, sp.Y+fc.miny)
+	composite(dst, src, font, r, sp1, image.Pt(fc.minx, fc.miny), op)
+	return image.Pt(p.X+fc.width, p.Y), image.Pt(sp.X+fc.width, sp.Y)
 }
