@@ -29,6 +29,7 @@ import (
 	"tractor.dev/wanix/fs/p9kit"
 	"tractor.dev/wanix/fs/pipe"
 	"tractor.dev/wanix/fs/signal"
+	"tractor.dev/wanix/fs/wsys"
 	"tractor.dev/wanix/fs/tarfs"
 	"tractor.dev/wanix/misc"
 	"tractor.dev/wanix/misc/allocfs"
@@ -65,6 +66,7 @@ func main() {
 		{"#wminput", &signal.QueueAllocator{MaxBytes: 32 * 1024, MaxQueues: 64}},
 		{"#wmoutput", &signal.QueueAllocator{MaxBytes: 32 * 1024, MaxQueues: 64}},
 		{"#i", draw.New()},
+		{"#wsys", wsys.New()},
 		// {"#ramfs", &memfs.Allocator{}},
 		{"#js", jsfs.NewFS(js.Global())},
 	}

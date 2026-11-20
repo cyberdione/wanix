@@ -13,9 +13,20 @@ import (
 // drawDevice is the kernel draw(3) device, registered at #i (wasm/wasm.go
 // sysbindings). drawMount is where every linux task's namespace binds it:
 // Plan 9's init(8) `bind -a #i /dev` serving /dev/draw.
+//
+// wsysDevice is the kernel rio(4) window-service device, registered at
+// #wsys (fs/wsys). wsysMount is where every linux task's namespace binds
+// it, the per-window files (cons, consctl, mouse, label, wctl) under
+// /mnt/wsys/<id>/ — rio's wsys mount, the same bind pattern as #i. The
+// device itself places no windows: ids are allocated by the host WM
+// (the desktop session) and the openat allowlist admits exactly the rio
+// files under mnt/wsys/<id>/ (never the host srv/ plane).
 const (
 	drawDevice = "#i"
 	drawMount  = "dev"
+
+	wsysDevice = "#wsys"
+	wsysMount  = "mnt/wsys"
 )
 
 // Driver runs Linux-personality wasm32 tasks (ferrule.linux.syscall import)
@@ -40,6 +51,11 @@ func (d *Driver) Start(t *wanix.Task) error {
 	// draw device is a broken kernel build, not a per-task condition, so the
 	// bind failure fails the task start.
 	if err := t.Bind(drawDevice, drawMount, fs.BindAfter); err != nil {
+		return err
+	}
+	// Serve the rio window service at /mnt/wsys. Like #i, a missing device
+	// is a broken kernel build, so the bind failure fails the task start.
+	if err := t.Bind(wsysDevice, wsysMount); err != nil {
 		return err
 	}
 	return worker.StartTaskWorker(d.Workers, t, linuxworker.BlobURL())
