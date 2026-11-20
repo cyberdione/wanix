@@ -255,7 +255,12 @@ export async function runLinux(e, caller) {
             })();
             const handle = streams[fd] ?? openFiles.get(fd);
             if (!handle) return -9;
-            const n = handle.write(data);
+            let n;
+            try {
+                n = handle.write(data);
+            } catch (_) {
+                return -5; // EIO — the read boundary below, for gathered writes
+            }
             return n ?? 0;
         }
         case 65: { // readv: sequential reads into the supplied vectors
@@ -286,7 +291,13 @@ export async function runLinux(e, caller) {
             if (buf > uu.length || count > uu.length - buf) return -14;
             const handle = streams[fd] ?? openFiles.get(fd);
             if (!handle) return -9;
-            return handle.write(uu.subarray(buf, buf + count)) ?? 0;
+            let n;
+            try {
+                n = handle.write(uu.subarray(buf, buf + count));
+            } catch (_) {
+                return -5; // EIO — see the read boundary
+            }
+            return n ?? 0;
         }
         case 56: { // openat(dirfd, path, flags, mode)
             if (a[0] !== -100) return -9;
@@ -360,11 +371,22 @@ export async function runLinux(e, caller) {
             const h = streams[fd] ?? openFiles.get(fd);
             if (!h) return -9;
             const data = new Uint8Array(count);
-            const n = h.read(data);
+            // A device error (the slot closed or was deleted while this
+            // read was parked, the rio(4) window teardown) is a per-read
+            // failure: report -EIO to the task and keep the sync worker
+            // running. Window gone = reads fail, not process death.
+            let n;
+            try {
+                n = h.read(data);
+            } catch (_) {
+                return -5; // EIO
+            }
             if (n > 0) uu.set(data.subarray(0, n), buf);
             return n;
         }
-        case 57: { const h = openFiles.get(a[0]); if (!h) return -9; h.close(); openFiles.delete(a[0]); return 0; }
+        // close(2) frees the descriptor even when the device reports an
+        // error, so the slot's refusal to close is absorbed, not fatal
+        case 57: { const h = openFiles.get(a[0]); if (!h) return -9; try { h.close(); } catch (_) {} openFiles.delete(a[0]); return 0; }
         case 62: { // _llseek(fd, off_hi, off_lo, result_ptr, whence) — open files only
             const fd = a[0] | 0, off = (a[1] * 4294967296) + (a[2] >>> 0), res = a[3] >>> 0, whence = a[4] | 0;
             const h = openFiles.get(fd);
@@ -372,7 +394,12 @@ export async function runLinux(e, caller) {
             if (whence < 0 || whence > 2) return -22;
             const uu = u(), vv = v();
             if (res + 8 > uu.length) return -14;
-            const pos = h.seek(off, whence);
+            let pos;
+            try {
+                pos = h.seek(off, whence);
+            } catch (_) {
+                return -5; // EIO — SEEK_END's device round-trip failed (see the read boundary)
+            }
             if (pos < 0) return pos;
             vv.setBigUint64(res, BigInt(pos), true);
             return 0;
