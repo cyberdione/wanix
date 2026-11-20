@@ -14,21 +14,31 @@
 // newer-generation 4-byte screen id suffix on 'v' (_isnewdisplay) is not
 // served.
 //
-// Supported data-file opcodes: A b c d f F N n O r v y.
+// Supported data-file opcodes: A b c d f F i l N n O r s v x y.
 // All other opcodes are rejected with an explicit error.
 //
 // Explicit limitations of this slice:
-//   - Channel formats are limited to GREY1 (k1), GREY8 (k8), RGB24 (r8g8b8).
-//   - 'd' implements op S and SoverD (both as opaque copy) and Clear; other
-//     Porter-Duff ops are rejected. Mask images are validated but treated as
-//     fully opaque.
+//   - Channel formats are limited to GREY1 (k1), GREY8 (k8), RGB24 (r8g8b8),
+//     RGBA32 (r8g8b8a8) and ALPHA8 (a8). Channel descriptor values follow
+//     the pinned strtochan (r8g8b8 == 0x081828, r8g8b8a8 == 0x08182848,
+//     a8 == 0x48); alpha-bearing pixels are stored premultiplied per
+//     allocimage(2) and memdraw.
+//   - 'd' implements the Porter-Duff ops Clear, S and SoverD with real
+//     alpha compositing (premultiplied channels, memdraw rounding) and
+//     per-pixel masks (grey or alpha masks); other Porter-Duff ops are
+//     rejected.
 //   - 'b' with a screen id allocates a plain image (no layer/window
 //     compositing); refresh methods are recorded but produce no notifications.
 //   - refresh file reads return EOF when empty instead of blocking.
+//   - Strings ('s'/'x') draw from a font cache image initialized by 'i'
+//     and loaded glyph-by-glyph by 'l'; this is the whole 4th-edition
+//     default-font path (libdraw getdefont allocates the subfont bits with
+//     'b'+'y', buildfont allocates the cache with 'b' and 'i', loadchar
+//     sends 'l' per glyph), so no font file service exists in the device.
 //   - Screens ('A'/'F') are bookkeeping only; there is no window manager.
-//   - No font cache ('i'/'l'), shapes ('e' 'E' 'L' 'p' 'P'), strings
-//     ('s' 'x'), compressed loads ('Y'), origin ('o'), top/bottom ('t'),
-//     public screen attach ('S'), or debug toggle ('D').
+//   - No shapes ('e' 'E' 'L' 'p' 'P'), compressed loads ('Y'), origin
+//     ('o'), top/bottom ('t'), public screen attach ('S'), or debug
+//     toggle ('D').
 package draw
 
 import (
@@ -60,13 +70,6 @@ const (
 	OpSoverD = 11 // SinD|SoutD|DoutS
 )
 
-// Channel formats (draw.h CHANn packing).
-const (
-	ChanGREY1 = 0x31     // CHAN1(CGrey, 1)
-	ChanGREY8 = 0x38     // CHAN1(CGrey, 8)
-	ChanRGB24 = 0x081828 // CHAN3(CRed, 8, CGreen, 8, CBlue, 8)
-)
-
 var (
 	ErrBadCommand   = fmt.Errorf("bad draw command")
 	ErrShortDraw    = fmt.Errorf("short draw message")
@@ -77,6 +80,8 @@ var (
 	ErrWrongName    = fmt.Errorf("wrong name for image")
 	ErrScreenExists = fmt.Errorf("screen id in use")
 	ErrNoClient     = fmt.Errorf("unknown draw client")
+	ErrNotFont      = fmt.Errorf("image not a font")
+	ErrIndex        = fmt.Errorf("character index out of range")
 	ErrSaturated    = fmt.Errorf("draw: resource limit reached")
 )
 

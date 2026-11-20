@@ -63,7 +63,16 @@ func OpenFile(fsys FS, name string, flag int, perm FileMode) (f File, err error)
 			// Close and recreate to truncate
 			f.Close()
 			f, err = Create(fsys, name)
-			if err != nil {
+			if errors.Is(err, ErrNotSupported) {
+				// Create is unsupported here (e.g. function files served by
+				// a backing process). The file exists — Open above succeeded
+				// — so reopening is the best available truncation, matching
+				// WriteFile's tolerance of unsupported Create. A missing file
+				// still surfaces (ErrNotExist).
+				if f, err = fsys.Open(name); err != nil {
+					return nil, err
+				}
+			} else if err != nil {
 				return nil, err
 			}
 		}

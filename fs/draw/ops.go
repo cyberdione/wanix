@@ -2,6 +2,7 @@ package draw
 
 import (
 	"fmt"
+	"image"
 )
 
 // execMessages parses and executes complete messages from c.msgbuf, leaving
@@ -37,6 +38,10 @@ func (c *client) messageLen(buf []byte) (int, error) {
 	// fixed-length messages
 	case 'A':
 		return need(buf, 1+4+4+4+1)
+	case 'i':
+		return need(buf, 1+4+4+1)
+	case 'l':
+		return need(buf, 1+4+4+2+4*4+2*4+1+1)
 	case 'b':
 		return need(buf, 1+4+4+1+4+1+4*4+4*4+4)
 	case 'c':
@@ -51,6 +56,15 @@ func (c *client) messageLen(buf []byte) (int, error) {
 		return need(buf, 1+4+4*4)
 	case 'v':
 		return 1, nil
+	case 's', 'x':
+		m := 47 // 1 + dst[4] + src[4] + font[4] + p[8] + clipr[16] + sp[8] + ni[2]
+		if buf[0] == 'x' {
+			m += 4 + 2*4 // bgid[4] bgp[8]
+		}
+		if len(buf) < m {
+			return -1, nil
+		}
+		return need(buf, m+2*bgShort(buf[45:]))
 	// variable-length messages
 	case 'n':
 		if len(buf) < 6 {
@@ -194,7 +208,7 @@ func (c *client) exec(msg []byte) error {
 		default:
 			return fmt.Errorf("unsupported draw op %d", c.op)
 		}
-		drawBlit(dst, src, bgRect(msg[13:]), bgPoint(msg[29:]), c.op)
+		composite(dst, src, mask, bgRect(msg[13:]), bgPoint(msg[29:]), bgPoint(msg[37:]), c.op)
 		return nil
 
 	case 'f':
@@ -286,6 +300,94 @@ func (c *client) exec(msg []byte) error {
 		}
 		c.readbuf = data
 		return nil
+
+	case 'i':
+		// initialize font: fontid[4] nchars[4] ascent[1]
+		id := bgLong(msg[1:])
+		if id == 0 {
+			return fmt.Errorf("cannot use display as font")
+		}
+		font := c.images[id]
+		if font == nil {
+			return ErrNoImage
+		}
+		if font.screen != 0 {
+			return fmt.Errorf("cannot use window as font")
+		}
+		ni := int(bgLong(msg[5:]))
+		if ni <= 0 || ni > 4096 {
+			return fmt.Errorf("bad font size (4096 chars max)")
+		}
+		font.fchar = make([]FChar, ni)
+		font.ascent = int(msg[9])
+		return nil
+
+	case 'l':
+		// load character: fontid[4] srcid[4] index[2] r[16] sp[8] left[1] width[1]
+		font := c.images[bgLong(msg[1:])]
+		if font == nil {
+			return ErrNoImage
+		}
+		if font.fchar == nil {
+			return ErrNotFont
+		}
+		src := c.images[bgLong(msg[5:])]
+		if src == nil {
+			return ErrNoImage
+		}
+		ci := bgShort(msg[9:])
+		if ci >= len(font.fchar) {
+			return ErrIndex
+		}
+		r := bgRect(msg[11:])
+		p := bgPoint(msg[27:])
+		// memdraw(font->image, r, src, p, memopaque, p, S)
+		composite(font, src, nil, r, p, p, OpS)
+		fc := &font.fchar[ci]
+		fc.minx, fc.maxx = r.Min.X, r.Max.X
+		fc.miny, fc.maxy = r.Min.Y, r.Max.Y
+		fc.left = int(int8(msg[35]))
+		fc.width = int(msg[36])
+		return nil
+
+	case 's', 'x':
+		// draw string: dst[4] src[4] font[4] p[8] clipr[16] sp[8] ni[2]
+		// ('x' adds bgid[4] bgp[8]) then ni index[2] entries (devdraw.c).
+		// p.y is the baseline (libdraw sends pt.y+f->ascent).
+		dst := c.images[bgLong(msg[1:])]
+		src := c.images[bgLong(msg[5:])]
+		font := c.images[bgLong(msg[9:])]
+		if dst == nil || src == nil || font == nil {
+			return ErrNoImage
+		}
+		if font.fchar == nil {
+			return ErrNotFont
+		}
+		p := bgPoint(msg[13:])
+		clipr := bgRect(msg[21:])
+		sp := bgPoint(msg[37:])
+		ni := bgShort(msg[45:])
+		off := 47
+		var bg *Image
+		bgq := image.Point{}
+		if msg[0] == 'x' {
+			bg = c.images[bgLong(msg[47:])]
+			if bg == nil {
+				return ErrNoImage
+			}
+			bgq = bgPoint(msg[51:])
+			off = 59
+		}
+		if 2*ni > len(msg)-off {
+			return ErrShortDraw
+		}
+		// The string clip rectangle temporarily replaces dst's clipr
+		// (devdraw.c swaps and restores it, also on error paths).
+		saved := dst.clipr
+		dst.clipr = clipr
+		err := drawString(dst, src, bg, bgq, font, p, sp, msg[off:], c.op)
+		dst.clipr = saved
+		return err
 
 	case 'v':
 		// flush: all operations are applied eagerly; nothing to do
