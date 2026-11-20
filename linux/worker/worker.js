@@ -16,9 +16,18 @@ const DRAW_PATH_RE = /^dev\/draw\/(new|\d+\/(ctl|data|refresh|colormap))$/;
 
 // rio(4) per-window files reachable in the task namespace (the driver binds
 // #wsys at mnt/wsys): the window files under mnt/wsys/<id>/ exactly. The
-// host service plane (#wsys/<id>/srv/*) is never admitted — the desktop WM
-// services the windows through the root namespace.
+// host service plane (#wsys/<id>/srv/*) is never admitted for the default
+// grant — the display server services the windows through the root
+// namespace.
 const WSYS_PATH_RE = /^mnt\/wsys\/(\d+)\/(cons|consctl|mouse|label|wctl)$/;
+
+// The WM grant (ADR 0007 K1): when the launch env carries WSYS_WM=1, the
+// driver binds "#wsys/wm" instead of "#wsys" and this allowlist adds the
+// srv plane for that one task — the device-level srv/state enumeration and
+// every window's srv files (consin/consout/mouse input routing, geometry,
+// resolved wctl lines, notes, state, ctl). All other wsys paths stay
+// closed; the WM grant adds nothing outside mnt/wsys.
+const WSYS_WM_PATH_RE = /^mnt\/wsys\/(?:(srv\/state)|(\d+)\/srv\/(consin|consout|mouse|geom|wctl|notes|state|ctl))$/;
 
 // split a cmd line on spaces, honoring single/double quotes (mirrors the
 // wanix task element's env parsing) so `rc -c 'echo hi'` keeps one argument
@@ -198,6 +207,10 @@ export async function runLinux(e, caller) {
     let stdinPos = 0;
     const wasm = extractWasm(e.data.bin);
     const argv = e.data.args, envp = e.data.env;
+    // the WM grant is fixed at task creation: the launch wiring writes
+    // WSYS_WM=1 into the task env, the driver mirrors it into the "#wsys/wm"
+    // bind, and this allowlist admits the srv plane for exactly that task
+    const wmGrant = Array.isArray(envp) && envp.includes("WSYS_WM=1");
     const memoryBytes = 16 * 1024 * 1024;
     const streams = {};
     for (const [fd, path] of [[0, e.data.stdin], [1, e.data.stdout], [2, e.data.stderr]]) {
@@ -309,6 +322,20 @@ export async function runLinux(e, caller) {
                 openFiles.set(fd, new FileDescription(handle));
                 return fd;
             }
+            // the WM grant's srv plane (env WSYS_WM=1 only, mirrored by the
+            // device-side grant behind "#wsys/wm"): enumeration and input
+            // routing into any slot's window files
+            const wsysWm = wmGrant ? WSYS_WM_PATH_RE.exec(p) : null;
+            if (wsysWm) {
+                const target = wsysWm[1]
+                    ? "mnt/wsys/srv/state"
+                    : `mnt/wsys/${wsysWm[2]}/srv/${wsysWm[3]}`;
+                const handle = new FileHandle(caller, target);
+                try { handle.open(); } catch (_) { return -13; }
+                const fd = nextFd++;
+                openFiles.set(fd, new FileDescription(handle));
+                return fd;
+            }
             // capability restriction: only the pre-authorized scratch file
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
             if (p !== "out.txt" && !scratch) return -13;
@@ -355,7 +382,7 @@ export async function runLinux(e, caller) {
             let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
             const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
             const draw = DRAW_PATH_RE.test(p);
-            const wsys = WSYS_PATH_RE.test(p);
+            const wsys = WSYS_PATH_RE.test(p) || (wmGrant && WSYS_WM_PATH_RE.test(p));
             const device = draw || wsys;
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
             if (p !== "out.txt" && !scratch && !device) return -13;
