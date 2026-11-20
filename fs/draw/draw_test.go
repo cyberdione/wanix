@@ -414,3 +414,135 @@ func TestColormap(t *testing.T) {
 type readerFunc func([]byte) (int, error)
 
 func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+// strtochan re-implements the pinned libdraw chan.c strtochan for the test's
+// reference derivation of wire channel descriptor values.
+func strtochan(s string) uint32 {
+	names := "rgbkamx"
+	var c uint32
+	for i := 0; i+1 < len(s); i += 2 {
+		t := strings.IndexByte(names, s[i])
+		if t < 0 || s[i+1] < '0' || s[i+1] > '9' {
+			return 0
+		}
+		c = c<<8 | uint32(t)<<4 | uint32(s[i+1]-'0')
+	}
+	return c
+}
+
+// TestChanValues pins the wire channel descriptor values to the pinned
+// strtochan (sys/src/libdraw/chan.c): the first channel of the string is the
+// most significant descriptor byte (r8g8b8 == 0x281808).
+func TestChanValues(t *testing.T) {
+	for s, v := range map[string]uint32{
+		"k1":       ChanGREY1,
+		"k8":       ChanGREY8,
+		"a8":       ChanALPHA8,
+		"r8g8b8":   ChanRGB24,
+		"r8g8b8a8": ChanRGBA32,
+	} {
+		if got := strtochan(s); got != v {
+			t.Errorf("strtochan(%q) = %#x, constant = %#x", s, got, v)
+		}
+	}
+}
+
+func TestAlphaImageAllocAndCtl(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	for i, tc := range []struct {
+		chanv uint32
+		str   string
+		depth int
+	}{{ChanALPHA8, "a8", 8}, {ChanRGBA32, "r8g8b8a8", 32}} {
+		id := uint32(i + 1)
+		wr(t, data, msg(byte('b'), id, uint32(0), byte(0), tc.chanv, byte(0),
+			rect{0, 0, 2, 1}, rect{0, 0, 2, 1}, uint32(0)))
+		var b [4]byte
+		binary.LittleEndian.PutUint32(b[:], id)
+		wr(t, ctl, b[:])
+		info := make([]byte, 144)
+		if _, err := ctl.Read(info); err != nil {
+			t.Fatalf("ctl read %s: %v", tc.str, err)
+		}
+		if fields := strings.Fields(string(info)); fields[2] != tc.str {
+			t.Errorf("ctl chan = %q, want %q", fields[2], tc.str)
+		}
+	}
+	// other alpha orders stay unsupported in this slice
+	for _, bad := range []uint32{strtochan("argb8a8"), strtochan("a8r8g8b8"), strtochan("k4"), strtochan("r8g8b8x8")} {
+		if _, err := fs.Write(data, msg(byte('b'), uint32(9), uint32(0), byte(0), bad, byte(0),
+			rect{0, 0, 1, 1}, rect{0, 0, 1, 1}, uint32(0))); err == nil {
+			t.Errorf("unsupported chan %#x accepted", bad)
+		}
+	}
+}
+
+// TestRGBA32ByteOrder checks image(6) byte order for r8g8b8a8: the pixel is
+// a little-endian 32-bit word with red most significant (color(6)), so file
+// bytes are alpha, blue, green, red.
+func TestRGBA32ByteOrder(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	wr(t, data, msg(byte('b'), uint32(1), uint32(0), byte(0), uint32(ChanRGBA32), byte(0),
+		rect{0, 0, 2, 2}, rect{0, 0, 2, 2}, uint32(DBlack)))
+	// two pixels: (a=E0,b=C0,g=80,r=40) and (a=00,b=10,g=20,r=30), two rows
+	px := []byte{0xE0, 0xC0, 0x80, 0x40, 0x00, 0x10, 0x20, 0x30}
+	wr(t, data, msg(byte('y'), uint32(1), rect{0, 0, 2, 2}, append(append([]byte{}, px...), px...)))
+	wr(t, data, msg(byte('r'), uint32(1), rect{0, 0, 2, 2}))
+	buf := make([]byte, 16)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	want := append(append([]byte{}, px...), px...)
+	if string(buf) != string(want) {
+		t.Fatalf("readback = %x, want %x", buf, want)
+	}
+}
+
+// TestRGBA32FillPremultiplied: 'b' fill colors are premultiplied RRGGBBAA
+// (allocimage(2)) and reach the channels via rgbatoimg truncation.
+func TestRGBA32FillPremultiplied(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	wr(t, data, msg(byte('b'), uint32(1), uint32(0), byte(0), uint32(ChanRGBA32), byte(0),
+		rect{0, 0, 1, 1}, rect{0, 0, 1, 1}, uint32(0x4080C0E0)))
+	wr(t, data, msg(byte('r'), uint32(1), rect{0, 0, 1, 1}))
+	buf := make([]byte, 4)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	// word = r<<24|g<<16|b<<8|a = 0x4080C0E0, little-endian bytes a,b,g,r
+	if string(buf) != string([]byte{0xE0, 0xC0, 0x80, 0x40}) {
+		t.Fatalf("fill pixel = %x, want e0 c0 80 40", buf)
+	}
+}
+
+// TestA8ImageRoundtrip: an alpha-only image loads and unloads bytes verbatim.
+func TestA8ImageRoundtrip(t *testing.T) {
+	dev := New()
+	ctl, data, _ := openClient(t, dev)
+	defer ctl.Close()
+	defer data.Close()
+
+	wr(t, data, msg(byte('b'), uint32(1), uint32(0), byte(0), uint32(ChanALPHA8), byte(0),
+		rect{0, 0, 5, 1}, rect{0, 0, 5, 1}, uint32(0)))
+	wr(t, data, msg(byte('y'), uint32(1), rect{0, 0, 5, 1}, []byte{0x00, 0x40, 0x80, 0xC0, 0xFF}))
+	wr(t, data, msg(byte('r'), uint32(1), rect{0, 0, 5, 1}))
+	buf := make([]byte, 5)
+	if _, err := data.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != string([]byte{0x00, 0x40, 0x80, 0xC0, 0xFF}) {
+		t.Fatalf("a8 readback = %x", buf)
+	}
+}

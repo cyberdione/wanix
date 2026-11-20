@@ -18,7 +18,11 @@
 // All other opcodes are rejected with an explicit error.
 //
 // Explicit limitations of this slice:
-//   - Channel formats are limited to GREY1 (k1), GREY8 (k8), RGB24 (r8g8b8).
+//   - Channel formats are limited to GREY1 (k1), GREY8 (k8), RGB24 (r8g8b8),
+//     RGBA32 (r8g8b8a8) and ALPHA8 (a8). Channel descriptor values follow
+//     the pinned strtochan (r8g8b8 == 0x081828, r8g8b8a8 == 0x08182848,
+//     a8 == 0x48); alpha-bearing pixels are stored premultiplied per
+//     allocimage(2) and memdraw.
 //   - 'd' implements op S and SoverD (both as opaque copy) and Clear; other
 //     Porter-Duff ops are rejected. Mask images are validated but treated as
 //     fully opaque.
@@ -58,13 +62,6 @@ const (
 	OpClear  = 0
 	OpS      = 10 // SinD|SoutD
 	OpSoverD = 11 // SinD|SoutD|DoutS
-)
-
-// Channel formats (draw.h CHANn packing).
-const (
-	ChanGREY1 = 0x31     // CHAN1(CGrey, 1)
-	ChanGREY8 = 0x38     // CHAN1(CGrey, 8)
-	ChanRGB24 = 0x081828 // CHAN3(CRed, 8, CGreen, 8, CBlue, 8)
 )
 
 var (
