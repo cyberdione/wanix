@@ -9,6 +9,11 @@ import { FileDescription } from "./file-description.js";
 
 const TASKNS = "#task";
 
+// draw(3) device files reachable in the task namespace (the driver binds #i
+// after dev, plan 9's `bind -a #i /dev`): the client-allocating "new" and
+// the per-client files. Everything else under dev/ stays unauthorized.
+const DRAW_PATH_RE = /^dev\/draw\/(new|\d+\/(ctl|data|refresh|colormap))$/;
+
 // split a cmd line on spaces, honoring single/double quotes (mirrors the
 // wanix task element's env parsing) so `rc -c 'echo hi'` keeps one argument
 function splitCmdQuoted(line) {
@@ -271,6 +276,19 @@ export async function runLinux(e, caller) {
             const raw = new TextDecoder().decode(uu.subarray(a[1] >>> 0, end));
             const p = raw.replace(/^\/+/, "");
             if (p === "" || p.split("/").some(seg => seg === ".." || seg === "")) return -13;
+            // draw(3) device files: the driver binds #i after dev (plan 9's
+            // bind -a #i /dev), so /dev/draw/... resolves in the task's own
+            // namespace to the kernel device. These are device opens with
+            // server-side semantics (opening "new" allocates a draw client);
+            // no scratch creation happens.
+            const draw = DRAW_PATH_RE.exec(p);
+            if (draw) {
+                const handle = new FileHandle(caller, `dev/draw/${draw[1]}`);
+                try { handle.open(); } catch (_) { return -13; }
+                const fd = nextFd++;
+                openFiles.set(fd, new FileDescription(handle));
+                return fd;
+            }
             // capability restriction: only the pre-authorized scratch file
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
             if (p !== "out.txt" && !scratch) return -13;
@@ -316,16 +334,20 @@ export async function runLinux(e, caller) {
             const uu = u(), vv = v(), buf = a[3] >>> 0, pathPtr = (a[1] >>> 0);
             let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
             const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
+            const draw = DRAW_PATH_RE.test(p);
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
-            if (p !== "out.txt" && !scratch) return -13;
+            if (p !== "out.txt" && !scratch && !draw) return -13;
             if (buf + 256 > uu.length) return -14;
             uu.fill(0, buf, buf + 256);
             vv.setUint32(buf + 0, 0x7ff, true);
             vv.setUint32(buf + 4, 4096, true);
             vv.setUint32(buf + 12, 1, true);
-            vv.setUint32(buf + 24, 33188, true);
+            vv.setUint32(buf + 24, draw ? 8630 : 33188, true); // draw: S_IFCHR|0666, scratch: S_IFREG|0644
             vv.setBigUint64(buf + 28, 42n, true);
-            const size = Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
+            // draw device files are character devices with no size to stat
+            // (a stat against the device allocates nothing after the kernel
+            // device's side-effect-free resolve, but skip the round-trip).
+            const size = draw ? 0 : Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
             vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
             return 0;
         }
