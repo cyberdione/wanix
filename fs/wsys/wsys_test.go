@@ -295,8 +295,8 @@ func TestWctlWriteGrammar(t *testing.T) {
 		cmd string
 		err error
 	}{
-		{"new -r 0 0 100 100", ErrNotInSubset},
-		{"delete", ErrNotInSubset},
+		// new and delete are real verbs now (ADR 0007 K1): their grammar
+		// and effects live in the dedicated tests below
 		{"frobnicate", ErrBadCommand},
 		{"resize -dx", ErrBadParam},
 		{"resize -zz 5", ErrBadParam},

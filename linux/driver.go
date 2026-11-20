@@ -18,15 +18,26 @@ import (
 // #wsys (fs/wsys). wsysMount is where every linux task's namespace binds
 // it, the per-window files (cons, consctl, mouse, label, wctl) under
 // /mnt/wsys/<id>/ — rio's wsys mount, the same bind pattern as #i. The
-// device itself places no windows: ids are allocated by the host WM
-// (the desktop session) and the openat allowlist admits exactly the rio
-// files under mnt/wsys/<id>/ (never the host srv/ plane).
+// device itself places no windows: ids are allocated through the host WM
+// or wctl new (ADR 0007), and the default openat allowlist admits exactly
+// the rio files under /mnt/wsys/<id>/ (never the host srv/ plane).
+//
+// wsysWMGrant is the WM bind variant (ADR 0007 K1): the WM task binds
+// "#wsys/wm" instead of "#wsys", which adds the srv plane — the
+// srv/state enumeration and per-window srv operations — for that task
+// only. A task is the WM iff its launch env carries wsysWMEnv (set by the
+// display server's launch wiring, read here and mirrored by the worker's
+// openat allowlist); there is no other mechanism, and no task can set it
+// for itself through the personality.
 const (
 	drawDevice = "#i"
 	drawMount  = "dev"
 
-	wsysDevice = "#wsys"
-	wsysMount  = "mnt/wsys"
+	wsysDevice  = "#wsys"
+	wsysWMGrant = "#wsys/wm"
+	wsysMount   = "mnt/wsys"
+
+	wsysWMEnv = "WSYS_WM"
 )
 
 // Driver runs Linux-personality wasm32 tasks (ferrule.linux.syscall import)
@@ -55,7 +66,18 @@ func (d *Driver) Start(t *wanix.Task) error {
 	}
 	// Serve the rio window service at /mnt/wsys. Like #i, a missing device
 	// is a broken kernel build, so the bind failure fails the task start.
-	if err := t.Bind(wsysDevice, wsysMount); err != nil {
+	// The bind source carries the grant: the WM task (launch env
+	// WSYS_WM=1, set by the display server's launch wiring) binds
+	// "#wsys/wm" and its worker allowlist admits the srv plane; every
+	// other task binds "#wsys" and keeps the default grant.
+	src := wsysDevice
+	for _, kv := range t.Env() {
+		if kv == wsysWMEnv+"=1" {
+			src = wsysWMGrant
+			break
+		}
+	}
+	if err := t.Bind(src, wsysMount); err != nil {
 		return err
 	}
 	return worker.StartTaskWorker(d.Workers, t, linuxworker.BlobURL())

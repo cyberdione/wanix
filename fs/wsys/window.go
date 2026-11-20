@@ -28,7 +28,11 @@ type window struct {
 	label     string
 	rect      image.Rectangle
 	current   bool
-	resized   bool // pending coalesced resize (rio w->resized)
+	hidden    bool   // rio's hidden list membership (wctl hide/unhide)
+	pid       int    // attached task id (wctl -pid / set)
+	scrolling bool   // wctl scroll/noscroll (on for new windows, rio default)
+	cmd       string // requested command text recorded from wctl new
+	resized   bool   // pending coalesced resize (rio w->resized)
 	mouse     mouseState
 	mouseQ    [][]byte // queued 49-byte records
 	mouseOpen bool     // single reader (rio returns Einuse)
@@ -232,16 +236,23 @@ var (
 
 // ---- state helpers ----
 
-func (w *window) closeLocked() {
+func (w *window) closeLocked() error {
 	if w.closed {
-		return
+		return nil
 	}
 	w.closed = true
 	w.cond.Broadcast()
-	_ = w.consInQ.Close()
-	_ = w.consOutQ.Close()
-	_ = w.wctlQ.Close()
-	_ = w.notesQ.Close()
+	err := w.consInQ.Close()
+	if err2 := w.consOutQ.Close(); err2 != nil && err == nil {
+		err = err2
+	}
+	if err2 := w.wctlQ.Close(); err2 != nil && err == nil {
+		err = err2
+	}
+	if err2 := w.notesQ.Close(); err2 != nil && err == nil {
+		err = err2
+	}
+	return err
 }
 
 // setRectLocked commits a geometry change: wakes blocked wctl readers and
@@ -457,20 +468,19 @@ type wctlFile struct {
 }
 
 func (f *wctlFile) Write(p []byte) (int, error) {
-	cmd, rect, err := parseWctl(string(p), f.w.rectNow())
+	req, err := f.w.dev.parseWctl(string(p), f.w.rectNow())
 	if err != nil {
 		return 0, err
 	}
-	var line string
-	if cmd == "resize" || cmd == "move" {
-		line = fmt.Sprintf("%s %d %d %d %d\n", cmd, rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y)
-	} else {
-		line = cmd + "\n"
-	}
-	if _, err := f.w.wctlQ.Write([]byte(line)); err != nil {
+	if err := f.w.dev.applyWctl(f.w, req); err != nil {
 		return 0, err
 	}
 	return len(p), nil
+}
+
+// formatWctlRect is the resolved geometry line shape ("resize x1 y1 x2 y2").
+func formatWctlRect(cmd string, r image.Rectangle) string {
+	return fmt.Sprintf("%s %d %d %d %d\n", cmd, r.Min.X, r.Min.Y, r.Max.X, r.Max.Y)
 }
 
 func (w *window) rectNow() image.Rectangle {
@@ -505,7 +515,11 @@ func (f *wctlFile) ReadContext(ctx context.Context, p []byte) (int, error) {
 	if w.current {
 		cur = "current"
 	}
-	line := fmt.Sprintf("%11d %11d %11d %11d %s %s ", r.Min.X, r.Min.Y, r.Max.X, r.Max.Y, cur, "visible")
+	vis := "visible"
+	if w.hidden {
+		vis = "hidden"
+	}
+	line := fmt.Sprintf("%11d %11d %11d %11d %s %s ", r.Min.X, r.Min.Y, r.Max.X, r.Max.Y, cur, vis)
 	return copy(p, line), nil
 }
 
@@ -649,6 +663,10 @@ func (f *srvStateFile) Read(p []byte) (int, error) {
 			"id":            w.id,
 			"label":         w.label,
 			"rect":          []int{w.rect.Min.X, w.rect.Min.Y, w.rect.Max.X, w.rect.Max.Y},
+			"visible":       !w.hidden,
+			"pid":           w.pid,
+			"scrolling":     w.scrolling,
+			"cmd":           w.cmd,
 			"raw":           w.raw,
 			"hold":          w.hold,
 			"current":       w.current,
@@ -708,89 +726,83 @@ func (f *srvCtlFile) Read([]byte) (int, error)   { return 0, fs.ErrPermission }
 func (f *srvCtlFile) Close() error               { return nil }
 func (f *srvCtlFile) Stat() (fs.FileInfo, error) { return fskit.Entry("ctl", 0222), nil }
 
-// ---- wctl command parsing (rio wctl.c grammar subset) ----
+// ---- wctl command parsing (rio wctl.c grammar, N10 tokenization) ----
 
-// parseWctl parses one wctl command. Geometry verbs resolve against cur
-// with rio's parameter arithmetic; the returned rect is final for resize
-// and move. Out-of-subset verbs return ErrNotInSubset.
-func parseWctl(s string, cur image.Rectangle) (string, image.Rectangle, error) {
-	fields := strings.Fields(s)
-	if len(fields) == 0 {
-		return "", image.Rectangle{}, ErrBadCommand
-	}
-	cmd := fields[0]
-	switch cmd {
-	case "current", "top", "bottom":
-		if len(fields) != 1 {
-			return "", image.Rectangle{}, ErrExtraText
-		}
-		return cmd, image.Rectangle{}, nil
-	case "resize", "move":
-		r, err := applyRectParams(fields[1:], cur)
-		if err != nil {
-			return "", image.Rectangle{}, err
-		}
-		if cmd == "move" {
-			// rio Move keeps the window size and takes the new origin
-			dx, dy := cur.Dx(), cur.Dy()
-			r = image.Rect(r.Min.X, r.Min.Y, r.Min.X+dx, r.Min.Y+dy)
-		}
-		if r.Min.X >= r.Max.X || r.Min.Y >= r.Max.Y {
-			return "", image.Rectangle{}, ErrBadRect
-		}
-		return cmd, r, nil
-	case "new", "set", "delete", "hide", "unhide", "scroll", "noscroll":
-		return "", image.Rectangle{}, ErrNotInSubset
-	}
-	return "", image.Rectangle{}, ErrBadCommand
+// wctlRequest is one parsed wctl command.
+type wctlRequest struct {
+	cmd    string
+	rect   image.Rectangle // resolved geometry for new/resize; move origin
+	id     int             // -id target (0: the writing window)
+	pid    int             // -pid
+	hide   bool            // -hide (new)
+	scroll int             // -scroll +1, -noscroll -1, unset 0 (new)
+	arg    string          // trailing text (new): the requested command
 }
 
-// applyRectParams applies rio's -r/-minx/-miny/-maxx/-maxy/-dx/-dy
-// parameters to r, mirroring parsewctl's set(sign, neg, abs, pos).
-func applyRectParams(fields []string, r image.Rectangle) (image.Rectangle, error) {
-	i := 0
-	next := func() (string, bool) {
-		if i < len(fields) {
-			s := fields[i]
-			i++
-			return s, true
-		}
-		return "", false
+// parseWctl parses one wctl command with rio's parameter arithmetic,
+// tokenized exactly as N10 tokenized it (whitespace fields, exact param
+// match — rio's word() matches prefixes, N10's grammar does not).
+// Geometry verbs resolve against cur, the writing window's rect, even when
+// -id retargets afterwards (rio's parsewctl ordering); new resolves against
+// rio's newrect() cascade instead. The first word that is not a parameter
+// ends the scan: for new the remainder is the requested command text, for
+// every other verb it is a bad parameter (N10's grammar, which keeps rio's
+// "missing or bad wctl parameter" for that shape).
+func (d *Device) parseWctl(s string, cur image.Rectangle) (wctlRequest, error) {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return wctlRequest{}, ErrBadCommand
 	}
+	req := wctlRequest{cmd: fields[0]}
+	switch req.cmd {
+	case "current", "top", "bottom":
+		if len(fields) != 1 {
+			return wctlRequest{}, ErrExtraText
+		}
+		return req, nil
+	case "new":
+		req.rect = d.newRect() // rio: newrect() replaces the base before params
+	case "resize", "move", "set", "delete", "hide", "unhide", "scroll", "noscroll":
+		req.rect = cur
+	default:
+		return wctlRequest{}, ErrBadCommand
+	}
+	i := 1
+scan:
 	for i < len(fields) {
 		p := fields[i]
-		i++
 		switch p {
 		case "-r":
 			var v [4]int
 			for j := range v {
-				s, ok := next()
-				if !ok {
-					return r, ErrBadParam
+				i++
+				if i >= len(fields) {
+					return wctlRequest{}, ErrBadParam
 				}
-				n, err := rioStrtol(s)
+				n, err := rioStrtol(fields[i])
 				if err != nil {
-					return r, ErrBadParam
+					return wctlRequest{}, ErrBadParam
 				}
 				v[j] = n
 			}
-			r = image.Rect(v[0], v[1], v[2], v[3])
+			req.rect = image.Rect(v[0], v[1], v[2], v[3])
 		case "-minx", "-miny", "-maxx", "-maxy", "-dx", "-dy":
-			s, ok := next()
-			if !ok {
-				return r, ErrBadParam
+			i++
+			if i >= len(fields) {
+				return wctlRequest{}, ErrBadParam
 			}
+			sv := fields[i]
 			sign := 0
-			if strings.HasPrefix(s, "-") {
+			if strings.HasPrefix(sv, "-") {
 				sign = -1
-				s = s[1:]
-			} else if strings.HasPrefix(s, "+") {
+				sv = sv[1:]
+			} else if strings.HasPrefix(sv, "+") {
 				sign = +1
-				s = s[1:]
+				sv = sv[1:]
 			}
-			n, err := rioStrtol(s)
+			n, err := rioStrtol(sv)
 			if err != nil {
-				return r, ErrBadParam
+				return wctlRequest{}, ErrBadParam
 			}
 			// set mirrors wctl.c: set(sign, neg, abs, pos)
 			set := func(neg, abs, pos int) int {
@@ -804,24 +816,228 @@ func applyRectParams(fields []string, r image.Rectangle) (image.Rectangle, error
 			}
 			switch p {
 			case "-minx":
-				r.Min.X = set(r.Min.X-n, n, r.Min.X+n)
+				req.rect.Min.X = set(req.rect.Min.X-n, n, req.rect.Min.X+n)
 			case "-miny":
-				r.Min.Y = set(r.Min.Y-n, n, r.Min.Y+n)
+				req.rect.Min.Y = set(req.rect.Min.Y-n, n, req.rect.Min.Y+n)
 			case "-maxx":
-				r.Max.X = set(r.Max.X-n, n, r.Max.X+n)
+				req.rect.Max.X = set(req.rect.Max.X-n, n, req.rect.Max.X+n)
 			case "-maxy":
-				r.Max.Y = set(r.Max.Y-n, n, r.Max.Y+n)
+				req.rect.Max.Y = set(req.rect.Max.Y-n, n, req.rect.Max.Y+n)
 			case "-dx":
 				// Deltax: neg max-n, abs min+n, pos max+n
-				r.Max.X = set(r.Max.X-n, r.Min.X+n, r.Max.X+n)
+				req.rect.Max.X = set(req.rect.Max.X-n, req.rect.Min.X+n, req.rect.Max.X+n)
 			case "-dy":
-				r.Max.Y = set(r.Max.Y-n, r.Min.Y+n, r.Max.Y+n)
+				req.rect.Max.Y = set(req.rect.Max.Y-n, req.rect.Min.Y+n, req.rect.Max.Y+n)
 			}
+		case "-pid":
+			i++
+			if i >= len(fields) {
+				return wctlRequest{}, ErrBadParam
+			}
+			// rio eats a leading sign for -pid and ignores it (no set())
+			n, err := rioStrtol(fields[i])
+			if err != nil {
+				return wctlRequest{}, ErrBadParam
+			}
+			req.pid = n
+		case "-id":
+			i++
+			if i >= len(fields) {
+				return wctlRequest{}, ErrBadParam
+			}
+			n, err := rioStrtol(fields[i])
+			if err != nil {
+				return wctlRequest{}, ErrBadParam
+			}
+			req.id = n
+		case "-hide":
+			req.hide = true
+		case "-scroll":
+			req.scroll = +1
+		case "-noscroll":
+			req.scroll = -1
+		case "-cd":
+			i++
+			if i >= len(fields) {
+				return wctlRequest{}, ErrBadParam
+			}
+			// the value is consumed and ignored: the device does not exec
 		default:
-			return r, ErrBadParam
+			if req.cmd == "new" {
+				// rio: trailing text after new is the command to run; the
+				// device records it (whitespace-normalized by the field
+				// split) for the display server's launch wiring
+				req.arg = strings.Join(fields[i:], " ")
+				break scan
+			}
+			return wctlRequest{}, ErrBadParam
+		}
+		i++
+	}
+	// rio checks the resolved rect for new and resize (Ebadwr); move is
+	// re-based on the -id target's size by the caller and checked there
+	if req.cmd == "new" || req.cmd == "resize" {
+		if req.rect.Min.X >= req.rect.Max.X || req.rect.Min.Y >= req.rect.Max.Y {
+			return wctlRequest{}, ErrBadRect
 		}
 	}
-	return r, nil
+	return req, nil
+}
+
+// applyWctl performs a parsed command. Geometry verbs queue the resolved
+// line on the target slot's srv/wctl queue (the display server commits
+// geometry via srv/geom writes; the device never resizes a slot itself).
+// The slot verbs act on device state and note the change like label writes.
+func (d *Device) applyWctl(w *window, req wctlRequest) error {
+	target, err := d.resolveTarget(w, req.id)
+	if err != nil {
+		return err
+	}
+	switch req.cmd {
+	case "new":
+		return d.newWindowFromWctl(req)
+	case "resize":
+		return writeWctlLine(target, formatWctlRect("resize", req.rect))
+	case "move":
+		// rio Move keeps the target's size and takes the new origin
+		dx, dy := target.rectSize()
+		rect := image.Rect(req.rect.Min.X, req.rect.Min.Y, req.rect.Min.X+dx, req.rect.Min.Y+dy)
+		if rect.Min.X >= rect.Max.X || rect.Min.Y >= rect.Max.Y {
+			return ErrBadRect
+		}
+		return writeWctlLine(target, formatWctlRect("move", rect))
+	case "current", "top", "bottom":
+		return writeWctlLine(target, req.cmd+"\n")
+	case "set":
+		// rio wsetpid: pid <= 0 is ignored and still succeeds
+		if req.pid > 0 {
+			target.setPID(req.pid)
+		}
+		return nil
+	case "delete":
+		return d.deleteWindow(target)
+	case "hide":
+		if err := target.setHidden(true); err != nil {
+			return err
+		}
+		target.note("hide")
+		return nil
+	case "unhide":
+		if err := target.setHidden(false); err != nil {
+			return err
+		}
+		target.note("unhide")
+		return nil
+	case "scroll":
+		target.setScrolling(true)
+		target.note("scroll")
+		return nil
+	case "noscroll":
+		target.setScrolling(false)
+		target.note("noscroll")
+		return nil
+	}
+	return ErrBadCommand
+}
+
+// resolveTarget returns the window a command acts on: the writing window
+// unless -id names another slot (rio's retarget after parsewctl).
+func (d *Device) resolveTarget(w *window, id int) (*window, error) {
+	if id == 0 {
+		return w, nil
+	}
+	t := d.lookup(id)
+	if t == nil {
+		return nil, ErrNoSuchWindow
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		return nil, ErrWindowDeleted
+	}
+	return t, nil
+}
+
+// newWindowFromWctl is wctl new (rio's wctlnew minus the exec): it
+// allocates the slot with the resolved rect and recorded flags, then
+// announces the new slot on its own srv/wctl queue. The display server
+// discovers the slot through the srv/state enumeration; launch wiring and
+// the -pid attach stay outside the device.
+func (d *Device) newWindowFromWctl(req wctlRequest) error {
+	d.mu.Lock()
+	w, err := d.newWindowLocked()
+	d.mu.Unlock()
+	if err != nil {
+		// rio's Ewalloc: the allocation failed (device slot cap)
+		return ErrAllocFailed
+	}
+	w.mu.Lock()
+	w.rect = req.rect
+	w.pid = req.pid
+	w.hidden = req.hide
+	w.scrolling = req.scroll >= 0
+	w.cmd = req.arg
+	w.mu.Unlock()
+	// the slot handshake: a fresh queue always accepts the announcement
+	_, _ = w.wctlQ.Write([]byte(formatWctlRect(fmt.Sprintf("new %d", w.id), req.rect)))
+	return nil
+}
+
+// deleteWindow is wctl delete: the srv/ctl close teardown, synchronous, for
+// the writing window or any -id target (rio has no per-window ownership).
+func (d *Device) deleteWindow(w *window) error {
+	w.mu.Lock()
+	err := w.closeLocked()
+	w.mu.Unlock()
+	if err != nil {
+		return ErrIO
+	}
+	d.removeWindow(w.id)
+	return nil
+}
+
+func writeWctlLine(w *window, line string) error {
+	_, err := w.wctlQ.Write([]byte(line))
+	return err
+}
+
+// ---- slot state changes (noted to the host like label writes) ----
+
+func (w *window) note(line string) { _, _ = w.notesQ.Write([]byte(line + "\n")) }
+
+func (w *window) setPID(pid int) {
+	w.mu.Lock()
+	w.pid = pid
+	w.mu.Unlock()
+	w.note(fmt.Sprintf("pid %d", pid))
+}
+
+func (w *window) setHidden(h bool) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if h == w.hidden {
+		if h {
+			return ErrAlreadyHidden
+		}
+		return ErrNotHidden
+	}
+	w.hidden = h
+	// the wctl geometry line reports visible|hidden: wake its readers
+	w.wctlSeq++
+	w.cond.Broadcast()
+	return nil
+}
+
+func (w *window) setScrolling(on bool) {
+	w.mu.Lock()
+	w.scrolling = on
+	w.mu.Unlock()
+}
+
+func (w *window) rectSize() (int, int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.rect.Dx(), w.rect.Dy()
 }
 
 // rioStrtol accepts plan 9's optional square brackets around rectangles.

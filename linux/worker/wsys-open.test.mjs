@@ -27,7 +27,7 @@ function makeCaller() {
     };
 }
 
-async function withLinuxSyscall(caller, fn) {
+async function withLinuxSyscall(caller, fn, env = []) {
     const compile = WebAssembly.compile, instantiate = WebAssembly.instantiate;
     const memory = new WebAssembly.Memory({ initial: 1 });
     WebAssembly.compile = async () => ({});
@@ -39,7 +39,7 @@ async function withLinuxSyscall(caller, fn) {
     });
     try {
         await runLinux({ data: {
-            bin: Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 0), args: [], env: [], tid: 'test',
+            bin: Uint8Array.of(0, 97, 115, 109, 1, 0, 0, 0, 0), args: [], env, tid: 'test',
         } }, caller);
     } finally {
         WebAssembly.compile = compile;
@@ -130,4 +130,94 @@ test('an open failure from the device surfaces as EACCES, not a crash', async ()
         putPath(memory, 128, 'mnt/wsys/1/mouse');
         assert.equal(syscall(56, -100, 128, 2, 0), -13);
     });
+});
+
+// The WM grant (ADR 0007 K1): a task whose launch env carries WSYS_WM=1
+// gets the srv plane through the "#wsys/wm" bind — the device-level
+// srv/state enumeration and every window's srv files. Everything outside
+// mnt/wsys stays closed, and the default grant still denies srv entirely.
+
+test('the WM grant admits the srv plane and maps it into the task namespace', async () => {
+    const caller = makeCaller();
+    await withLinuxSyscall(caller, (syscall, memory) => {
+        for (const path of [
+            'mnt/wsys/srv/state',
+            'mnt/wsys/1/srv/consin', 'mnt/wsys/1/srv/consout',
+            'mnt/wsys/2/srv/mouse', 'mnt/wsys/2/srv/geom',
+            'mnt/wsys/3/srv/wctl', 'mnt/wsys/3/srv/notes',
+            'mnt/wsys/3/srv/state', 'mnt/wsys/3/srv/ctl',
+            '/mnt/wsys/2/srv/mouse',
+        ]) {
+            putPath(memory, 128, path);
+            const fd = syscall(56, -100, 128, 2, 0);
+            assert.ok(fd >= 3, `${path} openat fd ${fd}`);
+        }
+    }, ['SHELL=/bin/rc', 'WSYS_WM=1']);
+    const opens = caller.calls.filter(([m]) => m === 'path_open').map(([, a]) => a.path);
+    assert.deepEqual(opens, [
+        'mnt/wsys/srv/state',
+        'mnt/wsys/1/srv/consin', 'mnt/wsys/1/srv/consout',
+        'mnt/wsys/2/srv/mouse', 'mnt/wsys/2/srv/geom',
+        'mnt/wsys/3/srv/wctl', 'mnt/wsys/3/srv/notes',
+        'mnt/wsys/3/srv/state', 'mnt/wsys/3/srv/ctl',
+        'mnt/wsys/2/srv/mouse',
+    ]);
+    assert.equal(caller.calls.filter(([m]) => m === 'path_touch').length, 0);
+});
+
+test('the WM grant widens nothing outside the srv plane', async () => {
+    const caller = makeCaller();
+    await withLinuxSyscall(caller, (syscall, memory) => {
+        for (const path of [
+            'mnt/wsys/1/winname', 'mnt/wsys/1/text', 'mnt/wsys/x/label',
+            'mnt/wsys/srv', 'mnt/wsys/srv/other', 'mnt/wsys/wm',
+            'mnt/wsys/1/srv', 'mnt/wsys/1/srv/wrong', 'mnt/wsys/1/label/x',
+            'mnt/wsys/1/label/../label',
+        ]) {
+            putPath(memory, 128, path);
+            assert.equal(syscall(56, -100, 128, 2, 0), -13, `${path} must be denied`);
+        }
+        // the window files stay reachable under the WM grant
+        putPath(memory, 128, 'mnt/wsys/1/cons');
+        assert.ok(syscall(56, -100, 128, 2, 0) >= 3);
+    }, ['WSYS_WM=1']);
+    assert.deepEqual(caller.calls.filter(([m]) => m === 'path_touch').length, 0);
+});
+
+test('the default grant denies the device-level srv/state too', async () => {
+    const caller = makeCaller();
+    await withLinuxSyscall(caller, (syscall, memory) => {
+        for (const path of [
+            'mnt/wsys/srv/state', 'mnt/wsys/1/srv/consin', 'mnt/wsys/2/srv/mouse',
+            'mnt/wsys/1/srv/ctl',
+        ]) {
+            putPath(memory, 128, path);
+            assert.equal(syscall(56, -100, 128, 2, 0), -13, `${path} must be denied`);
+        }
+    });
+    assert.deepEqual(caller.calls, [['exit', { code: 0 }]]);
+});
+
+test('the WM grant works only on WSYS_WM=1, not a lookalike', async () => {
+    const caller = makeCaller();
+    await withLinuxSyscall(caller, (syscall, memory) => {
+        for (const path of ['mnt/wsys/srv/state', 'mnt/wsys/1/srv/mouse']) {
+            putPath(memory, 128, path);
+            assert.equal(syscall(56, -100, 128, 2, 0), -13, `${path} must be denied`);
+        }
+    }, ['WSYS_WM=2', 'WSYS_WM ', 'WSYS_WM', 'wsys_wm=1']);
+    assert.deepEqual(caller.calls, [['exit', { code: 0 }]]);
+});
+
+test('statx reports srv files as character devices under the WM grant', async () => {
+    const caller = makeCaller();
+    await withLinuxSyscall(caller, (syscall, memory) => {
+        putPath(memory, 128, 'mnt/wsys/srv/state');
+        assert.equal(syscall(291, -100, 128, 0, 512, 0), 0);
+        const dv = new DataView(memory.buffer);
+        assert.equal(dv.getUint32(512 + 24, true), 8630); // S_IFCHR|0666
+        putPath(memory, 128, 'mnt/wsys/2/srv/mouse');
+        assert.equal(syscall(291, -100, 128, 0, 512, 0), 0);
+        assert.equal(dv.getUint32(512 + 24, true), 8630);
+    }, ['WSYS_WM=1']);
 });
