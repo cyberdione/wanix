@@ -150,6 +150,79 @@ func TestWctlDeleteFreesSlot(t *testing.T) {
 	}
 }
 
+// K2 device half: the slot teardown fails every reader parked at delete
+// time. Mouse and wctl readers fail closed (the error the personality
+// worker's parked fd_read RPC resolves with); cons readers drain to EOF.
+// Without this, the worker-side per-read error boundary would hang instead
+// of seeing the read fail.
+func TestWctlDeleteFailsParkedReaders(t *testing.T) {
+	d, _, id := alloc(t)
+	// a second slot plays the deleter (the K1 targeted delete)
+	wctlWrite(t, d, id, "new -r 0 0 100 100\n")
+
+	// consume the armed wctl read so the parked one waits on geometry
+	wf := openWin(t, d, id, "wctl")
+	if _, err := wf.Read(make([]byte, 128)); err != nil {
+		t.Fatal(err)
+	}
+	mf := openWin(t, d, id, "mouse")
+	cf := openWin(t, d, id, "cons")
+
+	type parked struct {
+		name string
+		ch   chan error
+	}
+	readers := []*parked{}
+	for _, f := range []struct {
+		name string
+		file fs.File
+	}{{"mouse", mf}, {"wctl", wf}, {"cons", cf}} {
+		p := &parked{name: f.name, ch: make(chan error, 1)}
+		readers = append(readers, p)
+		go func(file fs.File, p *parked) {
+			_, err := file.Read(make([]byte, 128))
+			p.ch <- err
+		}(f.file, p)
+	}
+	select {
+	case err := <-readers[0].ch:
+		t.Fatalf("mouse read did not park: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// the slot tears down under the parked readers
+	wctlWrite(t, d, "2", "delete -id "+id+"\n")
+	for _, p := range readers {
+		select {
+		case err := <-p.ch:
+			switch p.name {
+			case "mouse", "wctl":
+				if !errors.Is(err, fs.ErrClosed) {
+					t.Fatalf("parked %s read = %v, want closed", p.name, err)
+				}
+			case "cons":
+				if !errors.Is(err, io.EOF) {
+					t.Fatalf("parked cons read = %v, want EOF (drain-then-close)", err)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("parked %s read stayed blocked", p.name)
+		}
+	}
+	// the id is released and the enumeration drops the slot
+	if _, err := d.Stat(id + "/label"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stat after delete = %v", err)
+	}
+	list := listingJSON(t, d)
+	// only the deleter's own slot remains
+	if len(list.Windows) != 1 || list.Windows[0].ID != 2 {
+		t.Fatalf("enumeration after delete = %+v", list.Windows)
+	}
+	for _, f := range []fs.File{mf, cf, wf} {
+		f.Close()
+	}
+}
+
 func TestWctlHideUnhide(t *testing.T) {
 	d, _, id := alloc(t)
 	gf := openWin(t, d, id, "srv/geom")

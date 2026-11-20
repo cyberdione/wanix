@@ -360,7 +360,16 @@ export async function runLinux(e, caller) {
             const h = streams[fd] ?? openFiles.get(fd);
             if (!h) return -9;
             const data = new Uint8Array(count);
-            const n = h.read(data);
+            // A device error (the slot closed or was deleted while this
+            // read was parked, the rio(4) window teardown) is a per-read
+            // failure: report -EIO to the task and keep the sync worker
+            // running. Window gone = reads fail, not process death.
+            let n;
+            try {
+                n = h.read(data);
+            } catch (_) {
+                return -5; // EIO
+            }
             if (n > 0) uu.set(data.subarray(0, n), buf);
             return n;
         }

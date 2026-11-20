@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"sort"
 	"strings"
@@ -203,7 +204,7 @@ func TestMouseQueueSaturation(t *testing.T) {
 }
 
 func TestMouseResizeCoalescing(t *testing.T) {
-	d, _, id := alloc(t)
+	d, w, id := alloc(t)
 	gf := openWin(t, d, id, "srv/geom")
 	if _, err := fs.Write(gf, []byte("0 0 560 380\n")); err != nil {
 		t.Fatal(err)
@@ -244,15 +245,21 @@ func TestMouseResizeCoalescing(t *testing.T) {
 		t.Fatal("second read did not block after resize was delivered")
 	case <-time.After(20 * time.Millisecond):
 	}
-	// an event delivered while a resize is pending rebrands the record
-	if _, err := fs.Write(gf, []byte("0 0 760 480\n")); err != nil {
+	// an event delivered while a resize is pending rebrands the record.
+	// The black-box pair (srv/geom write, then srv/mouse write) lets the
+	// parked reader wake between the two commits, delivering the resize
+	// with the pre-event mouse state — legal rio behavior that made this
+	// test flaky. Perform the same two commits atomically under the window
+	// lock (srvMouseFile.Write's exact mutation order) so the reader sees
+	// both; the asserted outcome is unchanged.
+	w.mu.Lock()
+	w.setRectLocked(image.Rect(0, 0, 760, 480))
+	w.mouse = mouseState{buttons: 1, x: 300, y: 220}
+	if err := w.publishMouseLocked(1, 300, 220); err != nil {
+		w.mu.Unlock()
 		t.Fatal(err)
 	}
-	sf := openWin(t, d, id, "srv/mouse")
-	if _, err := fs.Write(sf, []byte("1 300 220\n")); err != nil {
-		t.Fatal(err)
-	}
-	sf.Close()
+	w.mu.Unlock()
 	select {
 	case b3 := <-got:
 		if b3[0] != 'r' {
