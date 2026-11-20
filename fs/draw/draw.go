@@ -194,27 +194,48 @@ func (d *Device) Stat(name string) (fs.FileInfo, error) {
 }
 
 func (d *Device) StatContext(ctx context.Context, name string) (fs.FileInfo, error) {
-	f, err := d.resolve(name)
+	r, err := d.resolve(name)
 	if err != nil {
 		return nil, err
 	}
-	return f.Stat()
+	return r.stat(), nil
 }
 
-// resolve strips an optional leading "draw/" prefix and looks up the path.
-func (d *Device) resolve(name string) (fs.File, error) {
+// resolved is a side-effect-free view of one device path: the kind of file
+// it names and, for per-client paths, the existing client that owns it.
+// Resolution never creates clients and never takes references, so any
+// number of resolves for one open leave device state untouched — the
+// requirement the kernel namespace router imposes by statting a path
+// before opening it (fs/vfs NS.OpenContext). Only OpenContext converts a
+// resolved view into an open file, performing the mutation (newClient for
+// "new", client.retain for <n>/<file>) exactly once per actual open.
+type resolved struct {
+	kind   resKind
+	client *client
+	id     string
+}
+
+type resKind int
+
+const (
+	resRoot resKind = iota
+	resNew
+	resClientDir
+	resCtl
+	resData
+	resColormap
+	resRefresh
+)
+
+// resolve strips an optional leading "draw/" prefix and looks up the path
+// without mutating device or client state.
+func (d *Device) resolve(name string) (*resolved, error) {
 	name = strings.TrimPrefix(name, "draw/")
 	if name == "." {
-		return fskit.DirFile(fskit.Entry(".", fs.ModeDir|0555),
-			fskit.Entry("draw", fs.ModeDir|0555),
-			fskit.Entry("new", 0666)), nil
+		return &resolved{kind: resRoot}, nil
 	}
 	if name == "new" {
-		c, err := d.newClient()
-		if err != nil {
-			return nil, err
-		}
-		return &ctlFile{client: c}, nil
+		return &resolved{kind: resNew}, nil
 	}
 	idStr, file, ok := strings.Cut(name, "/")
 	if !ok {
@@ -228,29 +249,80 @@ func (d *Device) resolve(name string) (fs.File, error) {
 	if c == nil {
 		return nil, fs.ErrNotExist
 	}
+	r := &resolved{id: idStr, client: c}
 	switch file {
 	case ".":
-		return fskit.DirFile(fskit.Entry(idStr, fs.ModeDir|0555),
-			fskit.Entry("ctl", 0666), fskit.Entry("data", 0666),
-			fskit.Entry("colormap", 0666), fskit.Entry("refresh", 0444)), nil
+		r.kind = resClientDir
 	case "ctl":
-		c.retain()
-		return &ctlFile{client: c}, nil
+		r.kind = resCtl
 	case "data":
-		c.retain()
-		return &dataFile{client: c}, nil
+		r.kind = resData
 	case "colormap":
-		c.retain()
-		return &colormapFile{dev: d, client: c}, nil
+		r.kind = resColormap
 	case "refresh":
-		c.retain()
-		return &refreshFile{client: c}, nil
+		r.kind = resRefresh
+	default:
+		return nil, fs.ErrNotExist
 	}
-	return nil, fs.ErrNotExist
+	return r, nil
+}
+
+// stat is the FileInfo for a resolved path. It names static metadata only;
+// nothing about the device or client state is touched or revealed.
+func (r *resolved) stat() fs.FileInfo {
+	switch r.kind {
+	case resRoot:
+		return fskit.Entry(".", fs.ModeDir|0555)
+	case resNew:
+		return fskit.Entry("new", 0666)
+	case resClientDir:
+		return fskit.Entry(r.id, fs.ModeDir|0555)
+	case resCtl:
+		return fskit.Entry("ctl", 0666)
+	case resData:
+		return fskit.Entry("data", 0666)
+	case resColormap:
+		return fskit.Entry("colormap", 0666)
+	case resRefresh:
+		return fskit.Entry("refresh", 0444)
+	}
+	return nil
 }
 
 func (d *Device) OpenContext(ctx context.Context, name string) (fs.File, error) {
-	return d.resolve(name)
+	r, err := d.resolve(name)
+	if err != nil {
+		return nil, err
+	}
+	switch r.kind {
+	case resRoot:
+		return fskit.DirFile(fskit.Entry(".", fs.ModeDir|0555),
+			fskit.Entry("draw", fs.ModeDir|0555),
+			fskit.Entry("new", 0666)), nil
+	case resNew:
+		c, err := d.newClient()
+		if err != nil {
+			return nil, err
+		}
+		return &ctlFile{client: c}, nil
+	case resClientDir:
+		return fskit.DirFile(fskit.Entry(r.id, fs.ModeDir|0555),
+			fskit.Entry("ctl", 0666), fskit.Entry("data", 0666),
+			fskit.Entry("colormap", 0666), fskit.Entry("refresh", 0444)), nil
+	case resCtl:
+		r.client.retain()
+		return &ctlFile{client: r.client}, nil
+	case resData:
+		r.client.retain()
+		return &dataFile{client: r.client}, nil
+	case resColormap:
+		r.client.retain()
+		return &colormapFile{dev: d, client: r.client}, nil
+	case resRefresh:
+		r.client.retain()
+		return &refreshFile{client: r.client}, nil
+	}
+	return nil, fs.ErrNotExist
 }
 
 func (d *Device) newClient() (*client, error) {
