@@ -14,6 +14,12 @@ const TASKNS = "#task";
 // the per-client files. Everything else under dev/ stays unauthorized.
 const DRAW_PATH_RE = /^dev\/draw\/(new|\d+\/(ctl|data|refresh|colormap))$/;
 
+// rio(4) per-window files reachable in the task namespace (the driver binds
+// #wsys at mnt/wsys): the window files under mnt/wsys/<id>/ exactly. The
+// host service plane (#wsys/<id>/srv/*) is never admitted — the desktop WM
+// services the windows through the root namespace.
+const WSYS_PATH_RE = /^mnt\/wsys\/(\d+)\/(cons|consctl|mouse|label|wctl)$/;
+
 // split a cmd line on spaces, honoring single/double quotes (mirrors the
 // wanix task element's env parsing) so `rc -c 'echo hi'` keeps one argument
 function splitCmdQuoted(line) {
@@ -289,6 +295,20 @@ export async function runLinux(e, caller) {
                 openFiles.set(fd, new FileDescription(handle));
                 return fd;
             }
+            // rio window files: the driver binds #wsys at mnt/wsys, so
+            // /mnt/wsys/<id>/<file> resolves to the kernel window-service
+            // device. Device opens with server-side semantics (mouse/wctl
+            // are single-reader; reads on mouse/cons block); positioned
+            // fd_read/fd_write carry the bytes, the same RPC scratch files
+            // use.
+            const wsys = WSYS_PATH_RE.exec(p);
+            if (wsys) {
+                const handle = new FileHandle(caller, `mnt/wsys/${wsys[1]}/${wsys[2]}`);
+                try { handle.open(); } catch (_) { return -13; }
+                const fd = nextFd++;
+                openFiles.set(fd, new FileDescription(handle));
+                return fd;
+            }
             // capability restriction: only the pre-authorized scratch file
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
             if (p !== "out.txt" && !scratch) return -13;
@@ -335,19 +355,22 @@ export async function runLinux(e, caller) {
             let e2 = pathPtr; while (e2 < uu.length && uu[e2] !== 0) e2++;
             const p = new TextDecoder().decode(uu.subarray(pathPtr, e2)).replace(/^\/+/, "");
             const draw = DRAW_PATH_RE.test(p);
+            const wsys = WSYS_PATH_RE.test(p);
+            const device = draw || wsys;
             const scratch = p.startsWith("tmp/tmpfile_") || p.startsWith("tmpfile_");
-            if (p !== "out.txt" && !scratch && !draw) return -13;
+            if (p !== "out.txt" && !scratch && !device) return -13;
             if (buf + 256 > uu.length) return -14;
             uu.fill(0, buf, buf + 256);
             vv.setUint32(buf + 0, 0x7ff, true);
             vv.setUint32(buf + 4, 4096, true);
             vv.setUint32(buf + 12, 1, true);
-            vv.setUint32(buf + 24, draw ? 8630 : 33188, true); // draw: S_IFCHR|0666, scratch: S_IFREG|0644
+            vv.setUint32(buf + 24, device ? 8630 : 33188, true); // device: S_IFCHR|0666, scratch: S_IFREG|0644
             vv.setBigUint64(buf + 28, 42n, true);
-            // draw device files are character devices with no size to stat
-            // (a stat against the device allocates nothing after the kernel
-            // device's side-effect-free resolve, but skip the round-trip).
-            const size = draw ? 0 : Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
+            // device files (draw, rio window service) are character devices
+            // with no size to stat (a stat against the device allocates
+            // nothing after the kernel devices' side-effect-free resolve,
+            // but skip the round-trip).
+            const size = device ? 0 : Number(caller.call("path_size", { path: `${TASKNS}/${tid}/w/${scratch ? p.split("/").pop() : p}` }) ?? 0);
             vv.setBigUint64(buf + 32, BigInt(Number.isFinite(size) ? size : 0), true);
             return 0;
         }
