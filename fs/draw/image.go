@@ -309,47 +309,139 @@ func (im *Image) fill(r image.Rectangle, color uint32) {
 	}
 }
 
-// pixelRGB returns the pixel at (x, y) as 0x00RRGGBB (alpha dropped).
-func (im *Image) pixelRGB(x, y int) uint32 {
-	r, g, b, _ := im.rgbaAt(x, y)
-	return uint32(r)<<16 | uint32(g)<<8 | uint32(b)
+// mul255 is memdraw's rounded multiply MUL: the nearest integer to x*y/255.
+func mul255(x, y int) int {
+	t := x*y + 128
+	return (t + (t >> 8)) >> 8
 }
 
-// rgbPixel converts 0x00RRGGBB to this image's pixel format (grey via the
-// NTSC average, per memdraw rgbatoimg).
-func (im *Image) rgbPixel(rgb uint32) uint32 {
-	return im.pixelFromRGBA(int(rgb>>16)&0xff, int(rgb>>8)&0xff, int(rgb)&0xff, 255)
-}
-
-// drawBlit copies the rectangle dr (dst coordinates) from src, mapping
-// dr.Min to sp in src coordinates. A replicated src tiles; otherwise reads
-// outside src.r are transparent (skipped). Only dst pixels inside dst.r and
-// dst.clipr change. Compositing is opaque copy of the src color; masks are
-// validated but treated as fully opaque. (Replaced by real compositing in a
-// following commit.)
-func drawBlit(dst, src *Image, dr image.Rectangle, sp image.Point, op int) {
-	dr = dr.Intersect(dst.clipr).Intersect(dst.r)
-	if dr.Empty() {
+// composite implements the raster of draw(3) 'd' per libmemdraw
+// memimagedraw for the supported Porter-Duff ops:
+//
+//	Clear  dst = 0
+//	S     dst = src*ma                      (per premultiplied channel)
+//	SoverD dst = src*ma + dst*(1-sa*ma)
+//
+// where sa is the source alpha and ma the mask alpha: the alpha channel
+// for alpha-bearing masks, else the NTSC grey of the mask color (draw(2)).
+// Pixels are premultiplied (see the Image doc). Clipping follows memdraw
+// drawclip: dr is cut to dst.r and dst.clipr; the draw rect is cut to the
+// parts whose source and mask samples fall inside the src and mask
+// rectangles (non-repl) and clip rectangles (always); repl images wrap
+// within r (drawrepl). mask == nil is the memopaque stand-in used by the
+// font ops.
+func composite(dst, src, mask *Image, dr image.Rectangle, sp, mp image.Point, op int) {
+	r := dr.Intersect(dst.r).Intersect(dst.clipr)
+	if r.Empty() {
 		return
 	}
-	sr := src.r
-	for y := dr.Min.Y; y < dr.Max.Y; y++ {
-		for x := dr.Min.X; x < dr.Max.X; x++ {
-			sx := sp.X + (x - dr.Min.X)
-			sy := sp.Y + (y - dr.Min.Y)
+	if op != OpClear && op != OpS && op != OpSoverD {
+		return
+	}
+	if src == dst {
+		src = snapshot(src, sp.Add(r.Min.Sub(dr.Min)), r.Size())
+	}
+	if mask == dst {
+		mask = snapshot(mask, mp.Add(r.Min.Sub(dr.Min)), r.Size())
+	}
+
+	// Map the destination rect into source space and clip it (drawclip):
+	// non-repl sources clip to r, all sources clip to clipr.
+	p0 := sp.Add(r.Min.Sub(dr.Min))
+	sr := image.Rect(p0.X, p0.Y, p0.X+r.Dx(), p0.Y+r.Dy())
+	if !src.repl {
+		sr = sr.Intersect(src.r)
+	}
+	sr = sr.Intersect(src.clipr)
+	if sr.Empty() {
+		return
+	}
+
+	// The mask rect is congruent to sr in mask space; clipping it clips the
+	// drawn area, and the clip is reflected back into the source rect.
+	m0 := mp.Add(sr.Min.Sub(sp))
+	if mask != nil {
+		mr := image.Rect(m0.X, m0.Y, m0.X+sr.Dx(), m0.Y+sr.Dy())
+		omr := mr
+		if !mask.repl {
+			mr = mr.Intersect(mask.r)
+		}
+		mr = mr.Intersect(mask.clipr)
+		if mr.Empty() {
+			return
+		}
+		sr = image.Rect(
+			sr.Min.X+mr.Min.X-omr.Min.X, sr.Min.Y+mr.Min.Y-omr.Min.Y,
+			sr.Max.X+mr.Max.X-omr.Max.X, sr.Max.Y+mr.Max.Y-omr.Max.Y)
+		m0 = mr.Min
+	}
+
+	// Back to destination coordinates; r, sr and m0 are now congruent.
+	r = sr.Add(r.Min.Sub(p0))
+
+	for y := 0; y < r.Dy(); y++ {
+		sy := sr.Min.Y + y
+		if src.repl {
+			sy = src.r.Min.Y + mod(sy-src.r.Min.Y, src.r.Dy())
+		}
+		my := m0.Y + y
+		if mask != nil && mask.repl {
+			my = mask.r.Min.Y + mod(my-mask.r.Min.Y, mask.r.Dy())
+		}
+		for x := 0; x < r.Dx(); x++ {
+			sx := sr.Min.X + x
 			if src.repl {
-				sx = sr.Min.X + mod(sx-sr.Min.X, sr.Dx())
-				sy = sr.Min.Y + mod(sy-sr.Min.Y, sr.Dy())
-			} else if !(image.Point{sx, sy}.In(sr)) {
-				continue
+				sx = src.r.Min.X + mod(sx-src.r.Min.X, src.r.Dx())
 			}
-			if op == OpClear {
-				dst.setPixel(x, y, 0)
-				continue
+			dx, dy := r.Min.X+x, r.Min.Y+y
+			ma := 255 // mask == nil: memopaque
+			if mask != nil {
+				mx := m0.X + x
+				if mask.repl {
+					mx = mask.r.Min.X + mod(mx-mask.r.Min.X, mask.r.Dx())
+				}
+				ma = mask.maskAlpha(mx, my)
 			}
-			dst.setPixel(x, y, dst.rgbPixel(src.pixelRGB(sx, sy)))
+			switch op {
+			case OpClear:
+				dst.setRGBA(dx, dy, 0, 0, 0, 0)
+			case OpS:
+				srr, sgg, sbb, saa := src.rgbaAt(sx, sy)
+				dst.setRGBA(dx, dy, mul255(ma, srr), mul255(ma, sgg), mul255(ma, sbb), mul255(ma, saa))
+			case OpSoverD:
+				srr, sgg, sbb, saa := src.rgbaAt(sx, sy)
+				fd := 255 - mul255(saa, ma)
+				drr, dgg, dbb, daa := dst.rgbaAt(dx, dy)
+				dst.setRGBA(dx, dy,
+					mul255(ma, srr)+mul255(fd, drr),
+					mul255(ma, sgg)+mul255(fd, dgg),
+					mul255(ma, sbb)+mul255(fd, dbb),
+					mul255(ma, saa)+mul255(fd, daa))
+			}
 		}
 	}
+}
+
+// snapshot copies the region of im that a draw onto im itself samples
+// (aligned at p, spanning size), so reads never see writes from the same
+// operation (memdraw buffers same-bitmap draws).
+func snapshot(im *Image, p image.Point, size image.Point) *Image {
+	sr := image.Rect(p.X, p.Y, p.X+size.X, p.Y+size.Y)
+	if im.repl {
+		sr = im.r // repl samples may wrap anywhere in r
+	} else {
+		sr = sr.Intersect(im.r)
+	}
+	if sr.Empty() {
+		return im
+	}
+	data, err := im.unload(sr)
+	if err != nil {
+		return im
+	}
+	cp := newImage(0, im.chanFmt, im.repl, sr, im.clipr, 0)
+	cp.load(sr, data)
+	return cp
 }
 
 func mod(a, b int) int {

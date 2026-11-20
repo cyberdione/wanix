@@ -23,9 +23,10 @@
 //     the pinned strtochan (r8g8b8 == 0x081828, r8g8b8a8 == 0x08182848,
 //     a8 == 0x48); alpha-bearing pixels are stored premultiplied per
 //     allocimage(2) and memdraw.
-//   - 'd' implements op S and SoverD (both as opaque copy) and Clear; other
-//     Porter-Duff ops are rejected. Mask images are validated but treated as
-//     fully opaque.
+//   - 'd' implements the Porter-Duff ops Clear, S and SoverD with real
+//     alpha compositing (premultiplied channels, memdraw rounding) and
+//     per-pixel masks (grey or alpha masks); other Porter-Duff ops are
+//     rejected.
 //   - 'b' with a screen id allocates a plain image (no layer/window
 //     compositing); refresh methods are recorded but produce no notifications.
 //   - refresh file reads return EOF when empty instead of blocking.

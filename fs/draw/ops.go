@@ -194,7 +194,7 @@ func (c *client) exec(msg []byte) error {
 		default:
 			return fmt.Errorf("unsupported draw op %d", c.op)
 		}
-		drawBlit(dst, src, bgRect(msg[13:]), bgPoint(msg[29:]), c.op)
+		composite(dst, src, mask, bgRect(msg[13:]), bgPoint(msg[29:]), bgPoint(msg[37:]), c.op)
 		return nil
 
 	case 'f':
