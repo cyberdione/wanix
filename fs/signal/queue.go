@@ -52,11 +52,13 @@ func (q *Queue) Write(p []byte) (int, error) {
 // WriteContext blocks until all of p is admitted to the queue, accepting
 // capacity-sized frames in order, and returns len(p), nil. It never drops
 // bytes: a full queue parks the writer until a reader drains (backpressure,
-// plan9 pipe write). The queue's lifetime bounds the park: Close fails the
-// write with io.ErrClosedPipe, reporting the bytes already admitted as the
-// count (a caller that must retry exactly can only do so against a queue
-// that is still open, where the count is always the full write). Cancelled
-// ctx fails the write the same way.
+// plan9 pipe write). The queue's lifetime bounds the park: a Close fails
+// the parked write with io.ErrClosedPipe, reporting the bytes already
+// admitted as the count — no retry is possible against a closed queue, so
+// the torn count cannot duplicate bytes at a retrying caller. A cancelled
+// ctx fails the write the same way; callers that can retry after a
+// cancellation must not re-send a partially admitted write (the count is
+// authoritative) or must pass a context they only cancel on teardown.
 func (q *Queue) WriteContext(ctx context.Context, p []byte) (int, error) {
 	stop := context.AfterFunc(ctx, func() { q.mu.Lock(); q.cond.Broadcast(); q.mu.Unlock() })
 	defer stop()
