@@ -1,6 +1,7 @@
 package wsys
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -576,5 +577,155 @@ func TestNamespaceBinds(t *testing.T) {
 	}
 	if string(b3) != "bound\n" {
 		t.Fatalf("label through window bind = %q", b3)
+	}
+}
+
+func newDeviceWithQueueCap(t *testing.T, cap int) (*Device, string) {
+	t.Helper()
+	d := New()
+	d.MaxQueueBytes = cap
+	f, err := d.Open("new")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	b, err := io.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d, strings.TrimSpace(string(b))
+}
+
+// TestConsWritePastCapacityDeliversUnderSlowDrain is the S1 recipe: the
+// task's cons echo output exceeds the consOutQ window while the host drains
+// slowly (desktop under full-suite load). Cons writes carry plan9 stream
+// semantics: the write blocks until the host drains (backpressure), and the
+// task sees either full acceptance or a real error — every byte queued, in
+// order, never a silent drop, never an unqueued success.
+func TestConsWritePastCapacityDeliversUnderSlowDrain(t *testing.T) {
+	const qcap = 4096
+	d, id := newDeviceWithQueueCap(t, qcap)
+	total := 3 * qcap
+	payload := make([]byte, total)
+	for i := range payload {
+		payload[i] = byte(i%251) + 1 // non-zero pattern
+	}
+
+	outf := openWin(t, d, id, "srv/consout")
+	defer outf.Close()
+
+	// slow host: small delayed reads, like the desktop under load
+	drained := make(chan []byte, 1)
+	go func() {
+		var ledger []byte
+		buf := make([]byte, 997) // coprime chunk: exercises frame splitting
+		for {
+			n, err := outf.Read(buf)
+			ledger = append(ledger, buf[:n]...)
+			if err != nil {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		drained <- ledger
+	}()
+
+	cf := openWin(t, d, id, "cons")
+	n, err := fs.Write(cf, payload)
+	if err != nil {
+		t.Fatalf("cons write past capacity: %v", err)
+	}
+	if n != total {
+		t.Fatalf("cons write = %d, want %d", n, total)
+	}
+	cf.Close()
+
+	// window teardown closes consOutQ: the host drain runs to EOF
+	ctl := openWin(t, d, id, "srv/ctl")
+	if _, err := fs.Write(ctl, []byte("close")); err != nil {
+		t.Fatal(err)
+	}
+	ctl.Close()
+
+	select {
+	case ledger := <-drained:
+		if len(ledger) != total {
+			t.Fatalf("host drained %d bytes, want %d (no silent loss)", len(ledger), total)
+		}
+		if !bytes.Equal(ledger, payload) {
+			t.Fatal("drained bytes differ from the task's writes")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("host drain never finished")
+	}
+}
+
+// TestConsOversizeWriteDeliversInOrder: one write larger than the whole
+// queue capacity is accepted in capacity-sized frames, never rejected.
+func TestConsOversizeWriteDeliversInOrder(t *testing.T) {
+	const qcap = 1024
+	d, id := newDeviceWithQueueCap(t, qcap)
+	total := 2 * qcap
+	payload := make([]byte, total)
+	for i := range payload {
+		payload[i] = byte('a' + i%26)
+	}
+
+	outf := openWin(t, d, id, "srv/consout")
+	defer outf.Close()
+	cf := openWin(t, d, id, "cons")
+	if n, err := fs.Write(cf, payload); err != nil || n != total {
+		t.Fatalf("oversize cons write = %d, %v", n, err)
+	}
+	cf.Close()
+
+	ctl := openWin(t, d, id, "srv/ctl")
+	if _, err := fs.Write(ctl, []byte("close")); err != nil {
+		t.Fatal(err)
+	}
+	ctl.Close()
+
+	ledger, err := io.ReadAll(outf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ledger, payload) {
+		t.Fatalf("oversize write delivered %d/%d byte-exact bytes", len(ledger), total)
+	}
+}
+
+// TestConsWriteFailsWhenWindowClosesWhileBlocked pins the bound on
+// blocking: a write parked on a full consOutQ is failed by the window
+// teardown with a real error. A parked-forever write would be a hang;
+// the device lifetime is the bound, exactly like a plan9 pipe whose
+// reader end is gone.
+func TestConsWriteFailsWhenWindowClosesWhileBlocked(t *testing.T) {
+	const qcap = 512
+	d, id := newDeviceWithQueueCap(t, qcap)
+	cf := openWin(t, d, id, "cons")
+	defer cf.Close()
+	done := make(chan error, 1)
+	go func() {
+		_, err := fs.Write(cf, make([]byte, 2*qcap)) // parks: no host drain
+		done <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("write did not park on a full queue (err=%v)", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	ctl := openWin(t, d, id, "srv/ctl")
+	if _, err := fs.Write(ctl, []byte("close")); err != nil {
+		t.Fatal(err)
+	}
+	ctl.Close()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("parked write returned success after window teardown")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("teardown failed to wake the parked write")
 	}
 }
