@@ -103,7 +103,7 @@ async function initializeTaskWorker(e) {
     });
 }
 
-function messageHandler(fs, call, tid) {
+export function messageHandler(fs, call, tid) {
     return async (e) => {
         if (!e.data.method) return;
         try {
