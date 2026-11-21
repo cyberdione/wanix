@@ -21,7 +21,10 @@
 //	                          launch env carries WSYS_WM=1 (the driver binds
 //	                          "#wsys/wm" instead of "#wsys" for it)
 //	#wsys/<id>/cons           rio cons: read console input (blocking),
-//	                          write console output. Multi-open (rio multiplexes).
+//	                          write console output (blocking backpressure:
+//	                          writes queue as the host drains srv/consout
+//	                          and fail on window teardown; bytes are never
+//	                          dropped silently). Multi-open (rio multiplexes).
 //	#wsys/<id>/consctl        rio consctl: write rawon|rawoff|holdon|holdoff;
 //	                          closing the fd resets raw and hold (rio semantics)
 //	#wsys/<id>/mouse          rio mouse: blocking single-reader reads of

@@ -673,24 +673,40 @@ func TestConsOversizeWriteDeliversInOrder(t *testing.T) {
 
 	outf := openWin(t, d, id, "srv/consout")
 	defer outf.Close()
+
+	// the host drains while the task writes: a write beyond the whole
+	// capacity needs the reader, that is the backpressure
+	drained := make(chan []byte, 1)
+	go func() {
+		ledger, err := io.ReadAll(outf)
+		if err != nil {
+			drained <- nil
+			return
+		}
+		drained <- ledger
+	}()
+	time.Sleep(5 * time.Millisecond)
+
 	cf := openWin(t, d, id, "cons")
 	if n, err := fs.Write(cf, payload); err != nil || n != total {
 		t.Fatalf("oversize cons write = %d, %v", n, err)
 	}
 	cf.Close()
 
+	// window teardown closes consOutQ: the host drain runs to EOF
 	ctl := openWin(t, d, id, "srv/ctl")
 	if _, err := fs.Write(ctl, []byte("close")); err != nil {
 		t.Fatal(err)
 	}
 	ctl.Close()
 
-	ledger, err := io.ReadAll(outf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(ledger, payload) {
-		t.Fatalf("oversize write delivered %d/%d byte-exact bytes", len(ledger), total)
+	select {
+	case ledger := <-drained:
+		if ledger == nil || !bytes.Equal(ledger, payload) {
+			t.Fatalf("oversize write not delivered byte-exactly (%d bytes)", len(ledger))
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("host drain never finished")
 	}
 }
 
@@ -727,5 +743,28 @@ func TestConsWriteFailsWhenWindowClosesWhileBlocked(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("teardown failed to wake the parked write")
+	}
+}
+
+// TestConsWriteAtIgnoresOffset pins the K4 interleaving audit: cons is a
+// stream device (no Seek, no io.WriterAt), so fs.WriteAt falls through to
+// a sequential write for ANY offset — the positioned fd_write RPC carries
+// the offset as bookkeeping only. With no seek step there is no seek/write
+// interleave window for two writers to corrupt each other's position; the
+// device's queue serializes frames (writes may interleave at frame
+// granularity, as rio multiplexed cons does).
+func TestConsWriteAtIgnoresOffset(t *testing.T) {
+	d, _, id := alloc(t)
+	outf := openWin(t, d, id, "srv/consout")
+	defer outf.Close()
+	cf := openWin(t, d, id, "cons")
+	defer cf.Close()
+	if n, err := fs.WriteAt(cf, []byte("tail"), 5000); err != nil || n != 4 {
+		t.Fatalf("WriteAt(cons, off=5000) = %d,%v", n, err)
+	}
+	b := make([]byte, 8)
+	n, err := outf.Read(b)
+	if err != nil || string(b[:n]) != "tail" {
+		t.Fatalf("consout = %q,%v", b[:n], err)
 	}
 }

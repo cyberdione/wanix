@@ -17,8 +17,10 @@ import (
 )
 
 // window is one per-window service directory. Geometry, the label and the
-// consctl state live here; console and host queues are bounded byte streams
-// (fs/signal Queue: atomic frames, drain-then-EOF close, busy on overflow).
+// consctl state live here; the host-fed queues are bounded byte streams
+// with atomic frames (fs/signal Queue: busy on overflow, drain-then-EOF
+// close), while the task-facing cons output queue backpressures its writer
+// instead (Queue.WriteContext: block until drained, fail on teardown).
 type window struct {
 	dev *Device
 	id  int
@@ -309,7 +311,13 @@ func (f *consFile) ReadContext(ctx context.Context, p []byte) (int, error) {
 }
 
 func (f *consFile) Write(p []byte) (int, error) {
-	return f.w.consOutQ.Write(p)
+	// cons output is a stream the host drains through srv/consout: the
+	// write blocks until every byte is queued (plan9 pipe write semantics,
+	// WriteContext) instead of rejecting whole writes once the 32 KiB
+	// window fills — a task's echo must never lose its tail to a slow host
+	// (the S1 recipe). The bound is the device lifetime: window teardown
+	// closes the queue and fails the parked write with a real error.
+	return f.w.consOutQ.WriteContext(context.Background(), p)
 }
 
 func (f *consFile) Close() error               { return nil }
