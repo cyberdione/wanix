@@ -47,6 +47,16 @@ func WriteAt(f File, data []byte, off int64) (n int, err error) {
 	// adjust, so write sequentially instead. This is also how stream-oriented
 	// callers such as WASI fd_write use the offset: as bookkeeping for the
 	// stream position rather than a seek request.
+	//
+	// Reachability audit (K4): every task-reachable device file is either a
+	// non-seekable stream writer (wsys cons/label/wctl, draw data/ctl) that
+	// takes this sequential fall-through, or implements io.WriterAt directly
+	// (fskit nodes, pipes, p9kit, syncfs). The Seek+Write branch below is a
+	// two-step operation on the shared file object — two concurrent writers
+	// could interleave a seek/write pair and corrupt each other's position —
+	// so a file that implements io.Seeker and io.Writer but not
+	// io.WriterAt must not be exposed to concurrent positioned writes;
+	// implement io.WriterAt instead.
 	if _, ok := f.(io.Seeker); ok {
 		_, err = Seek(f, off, 0) // SEEK_SET = 0
 		if err != nil {

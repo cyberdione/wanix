@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -506,5 +507,155 @@ func TestQueueAllocatorOpenContextRoutesTaskCancellation(t *testing.T) {
 	}
 	if _, err = a.Open(id + "/write"); err != fs.ErrNotExist {
 		t.Fatalf("task exit did not reclaim allocator entry: %v", err)
+	}
+}
+
+func TestQueueWriteContextBlocksUntilDrained(t *testing.T) {
+	const limit = 8
+	q := NewQueue(limit)
+	if _, err := q.Write([]byte("12345678")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := q.WriteContext(context.Background(), []byte("abcdefg"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("write did not park on a full queue (err=%v)", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	// the host drains slowly; every drained byte comes out in order
+	drained := make(chan []byte, 1)
+	go func() { drained <- readAllQueue(t, q) }()
+	time.Sleep(2 * time.Millisecond)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("write under concurrent drain: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("write stayed parked with an active reader")
+	}
+	_ = q.Close()
+	got := <-drained
+	if string(got) != "12345678abcdefg" {
+		t.Fatalf("ledger = %q, want %q", got, "12345678abcdefg")
+	}
+}
+
+func TestQueueWriteContextChunksOversizeWrite(t *testing.T) {
+	const limit = 16
+	q := NewQueue(limit)
+	total := 2*limit + 5
+	payload := make([]byte, total)
+	for i := range payload {
+		payload[i] = byte('A' + i%26)
+	}
+	read := make(chan []byte, 1)
+	go func() {
+		read <- readAllQueue(t, q)
+	}()
+	time.Sleep(5 * time.Millisecond) // let the reader park
+	if n, err := q.WriteContext(context.Background(), payload); err != nil || n != total {
+		t.Fatalf("WriteContext = %d,%v", n, err)
+	}
+	_ = q.Close()
+	got := <-read
+	if len(got) != total || !bytes.Equal(got, payload) {
+		t.Fatalf("oversize write delivered %d/%d byte-exact bytes", len(got), total)
+	}
+}
+
+func TestQueueWriteContextCloseFailsParkedWrite(t *testing.T) {
+	const limit = 8
+	q := NewQueue(limit)
+	if _, err := q.Write([]byte("fullfull")); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := q.WriteContext(context.Background(), []byte("x"))
+		done <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	_ = q.Close()
+	select {
+	case err := <-done:
+		if !errors.Is(err, io.ErrClosedPipe) {
+			t.Fatalf("parked write after close = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close failed to wake the parked write")
+	}
+	// a torn oversize write (closed mid-chunks) reports the admitted count
+	// alongside the error: no further retries are possible on a closed
+	// queue, so the count cannot duplicate bytes
+	q2 := NewQueue(4)
+	if _, err := q2.Write([]byte("ab")); err != nil {
+		t.Fatal(err)
+	}
+	nch := make(chan int, 1)
+	errch := make(chan error, 1)
+	go func() {
+		n, err := q2.WriteContext(context.Background(), make([]byte, 12))
+		nch <- n
+		errch <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	_ = q2.Close()
+	n, err := <-nch, <-errch
+	if err == nil || n == 0 || n >= 12 {
+		t.Fatalf("torn oversize write = %d,%v (want 0<n<12 with an error)", n, err)
+	}
+}
+
+func TestQueueWriteContextCancellationKeepsQueueUsable(t *testing.T) {
+	const limit = 4
+	q := NewQueue(limit)
+	if _, err := q.Write([]byte("aaaa")); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := q.WriteContext(ctx, []byte("bb"))
+		done <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled write = %v", err)
+	}
+	// the queue still serves: drain, write, read back
+	if _, err := q.Read(make([]byte, limit)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Write([]byte("z")); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 1)
+	if n, err := q.Read(b); err != nil || string(b[:n]) != "z" {
+		t.Fatalf("readback = %q,%v", b[:n], err)
+	}
+}
+
+// readAllQueue drains q to EOF on a background reader: it is the slow-host
+// stand-in for the backpressure tests.
+func readAllQueue(t *testing.T, q *Queue) []byte {
+	t.Helper()
+	var out []byte
+	buf := make([]byte, 7)
+	for {
+		n, err := q.Read(buf)
+		out = append(out, buf[:n]...)
+		if err == io.EOF {
+			return out
+		}
+		if err != nil {
+			t.Errorf("drain: %v", err)
+			return out
+		}
 	}
 }
