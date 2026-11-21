@@ -131,9 +131,16 @@ export function messageHandler(fs, call, tid) {
                 call.respond(true);
                 break;
             case "fd_read": {
+                // The CallBuffer response slot is bounded; asking for more
+                // than it can carry would overflow respond() on a full read:
+                // the handler error-path then fails the whole read while the
+                // device bytes consumed for it are dropped. Cap to the slot
+                // like the wasi personality; a full slot is a legal short
+                // read.
+                const count = Math.min(e.data.count, call.maxData);
                 const data = e.data.at === undefined
-                    ? await fs.read(e.data.fd, e.data.count)
-                    : await fs.readAt(e.data.fd, e.data.count, e.data.at);
+                    ? await fs.read(e.data.fd, count)
+                    : await fs.readAt(e.data.fd, count, e.data.at);
                 call.respond(data);
                 break;
             }

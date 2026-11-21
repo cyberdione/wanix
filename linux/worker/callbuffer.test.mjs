@@ -46,7 +46,7 @@ parentPort.postMessage(trace);
 
 const FD = 100;
 const CHUNK = 32;
-const TOTAL = CHUNK * 1000; // 32000 bytes: larger than the 16376-byte slot
+const TOTAL = 34000; // larger than two full-slot reads (2 x 16360)
 
 // The fs side of the real messageHandler: a positioned byte ledger with
 // the same call shapes WanixHandle serves. errAt makes every write from
